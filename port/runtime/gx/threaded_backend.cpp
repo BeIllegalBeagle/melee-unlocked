@@ -193,6 +193,14 @@ class ThreadedBackend final : public Backend {
     static const bool handover_spin = [] { const char* v = std::getenv("MELEE_HANDOVER_SPIN");
                                            return !(v && *v == '0') && std::thread::hardware_concurrency() >= 8; }();
     uint64_t popped_total = 0;
+    // Levelling the two kinds of present. The first present of a game frame reaches the screen later
+    // after the moment it shows than the repeated ones that follow (it records more, and a frame shown as
+    // drawn shows the frame's own moment whenever it lands): 1.0 to 1.7 ms measured 11-21, a step in and
+    // a step out of every game frame. The repeated presents are moved back by that difference, found
+    // from the renderer's own measurement of each kind, so both show the game the same time late.
+    // MELEE_KIND_LEVEL=0 (tests): off.
+    static const bool kind_level = [] { const char* v = std::getenv("MELEE_KIND_LEVEL"); return !(v && *v == '0'); }();
+    double kind_lag[2] = {0.0, 0.0}, repeat_shift = 0.0; uint64_t kind_serial = 0, kind_samples[2] = {0, 0};
     // The frame a new one replaces is handed back to the queue after the new frame's present, not
     // before: emptying it (a few hundred draws with their poses) took 0.2 ms the new frame waited for.
     Frame retired; bool retired_pending = false;
@@ -587,6 +595,8 @@ class ThreadedBackend final : public Backend {
         if (shown_lead && !live_options.vsync && !scanline_active && !handover_now && options_.pin_phase < 0 && lag_slow > 0.0)
           lead = std::min(std::max((lag_fast - lag_slow) + (solve_fast - solve_slow), -0.004), 0.004);
         t = phase_for(now + lead);
+        if (kind_level && current.sequence == rendered_sequence && options_.pin_phase < 0 && !scanline_active)
+          t = std::min(std::max(t - repeat_shift / SIM_PERIOD, 0.0), 1.0);
         shown_moment = base + t * SIM_PERIOD;
         if (pair_pending && current.sequence != rendered_sequence && !interpolate && t <= kArrivalPhase) {
           arrival_exact = true; t = 0.0; shown_moment = base;
@@ -616,6 +626,7 @@ class ThreadedBackend final : public Backend {
                                      : handover_now ? (last_submission > 0 ? last_submission + 0.5 * cap_period : 0) : next_present);
       solver_pair_counter().store(subframes ? solver.pair_count() : 0, std::memory_order_relaxed);   // for the backends' "gpu:" line
       renderer->note_shown_moment(shown_moment);
+      renderer->note_shown_kind(current.sequence == rendered_sequence ? 1 : 0);
       const double render_start = host::now_seconds();
       double solver_ms = 0;
       if (!arrival_exact) pair_now(true);
@@ -675,6 +686,16 @@ class ThreadedBackend final : public Backend {
         if (!arrival_exact) {   // a frame presented as drawn has no re-pose to time
           solve_fast = solve_fast > 0.0 ? solve_fast + 0.35 * (s - solve_fast) : s;
           solve_slow = solve_slow > 0.0 ? solve_slow + 0.01 * (s - solve_slow) : s;
+        }
+        {
+          double kl = 0.0; int kind = 0; uint64_t ks = 0;
+          if (kind_level && renderer->shown_lag(kl, kind, ks) && ks != kind_serial && (kind == 0 || kind == 1)) {
+            kind_serial = ks;
+            kind_lag[kind] = kind_samples[kind]++ ? kind_lag[kind] + 0.05 * (kl - kind_lag[kind]) : kl;
+            // The repeated kind's own lag already holds the shift, so the shift moves by what is still left.
+            if (kind == 1 && kind_samples[0] > 20 && kind_samples[1] > 20)
+              repeat_shift = std::min(std::max(repeat_shift + 0.02 * (kind_lag[0] - kind_lag[1]), -0.003), 0.003);
+          }
         }
         double lag = 0.0; uint64_t serial = 0;
         if (renderer->display_lag(lag, serial) && serial != lag_serial) {
@@ -852,7 +873,8 @@ class ThreadedBackend final : public Backend {
           }
           pacing_intervals.clear();
           host::log("render cost: solver %.2f ms/frame, submit %.2f ms/frame (%s)", 1000.0 * build_seconds / std::max<uint64_t>(1, cost_presented), 1000.0 * submit_seconds / std::max<uint64_t>(1, cost_presented), render_profile_line(renderer).c_str());
-          host::log("render loop: upkeep %.3f ms a pass over %llu passes", 1000.0 * upkeep_seconds / std::max<uint64_t>(1, upkeep_passes), (unsigned long long)upkeep_passes);
+          host::log("render loop: upkeep %.3f ms a pass over %llu passes | to the screen after the moment shown: first presents %.2f ms, repeats %.2f ms, repeats moved back %.2f ms",
+                    1000.0 * upkeep_seconds / std::max<uint64_t>(1, upkeep_passes), (unsigned long long)upkeep_passes, kind_lag[0] * 1000.0, kind_lag[1] * 1000.0, repeat_shift * 1000.0);
           upkeep_seconds = 0; upkeep_passes = 0;
           build_seconds = submit_seconds = 0; cost_presented = 0;
           if (authored) {

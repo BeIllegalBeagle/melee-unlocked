@@ -516,6 +516,12 @@ class D3D12Backend : public Backend {
     return true;
   }
   void note_shown_moment(double moment) override { pending_moment_ = moment; }
+  void note_shown_kind(int kind) override { pending_kind_ = kind; }
+  bool shown_lag(double& seconds, int& kind, uint64_t& serial) const override {
+    if (!shown_lag_serial_) return false;
+    seconds = shown_lag_; kind = shown_lag_kind_; serial = shown_lag_serial_;
+    return true;
+  }
   // DXGI's own count of what reached the screen: presents shown, vertical refreshes that went by,
   // and refreshes that showed the previous frame again. Frame statistics are only reported while
   // the swap chain owns the display (exclusive or independent flip); while Windows composes the
@@ -1152,6 +1158,11 @@ class D3D12Backend : public Backend {
   double slot_cpu_start_[FRAME_SLOTS] = {}, slot_moment_[FRAME_SLOTS] = {};
   bool slot_shown_[FRAME_SLOTS] = {};
   double pending_moment_ = 0.0, display_lag_ = 0.0;
+  // A frame is on the screen once the GPU has finished it AND its Present was called: a frame held for
+  // its slot of a frame cap is finished long before it is presented.
+  double slot_present_[FRAME_SLOTS] = {};
+  int pending_kind_ = 0, slot_kind_[FRAME_SLOTS] = {}, shown_lag_kind_ = 0;
+  double shown_lag_ = 0.0; uint64_t shown_lag_serial_ = 0;
   uint64_t display_lag_serial_ = 0;
   uint64_t clock_gpu_ = 0, clock_cpu_ = 0; double clock_offset_ = 0.0, clock_at_ = -1.0;
   FILE* shown_trace_ = nullptr;
@@ -5303,9 +5314,13 @@ void D3D12Backend::read_gpu_timers() {
     static const double qpc_hz = [] { LARGE_INTEGER f{}; QueryPerformanceFrequency(&f); return f.QuadPart > 0 ? (double)f.QuadPart : 1e7; }();
     const double gpu_end = (double)clock_cpu_ / qpc_hz + clock_offset_ +
                            (double)(int64_t)(ts[5] - clock_gpu_) / (double)timer_freq_;
-    const double lag = gpu_end - slot_cpu_start_[slot_];
+    const double shown = std::max(gpu_end, slot_present_[slot_]);
+    const double lag = shown - slot_cpu_start_[slot_];
     if (lag > 0.0 && lag < 0.1) { display_lag_ = lag; ++display_lag_serial_; }
-    if (shown_trace_) std::fprintf(shown_trace_, "%.6f,%.6f,%.6f\n", slot_cpu_start_[slot_], gpu_end, slot_moment_[slot_]);
+    if (slot_moment_[slot_] > 0.0 && std::fabs(shown - slot_moment_[slot_]) < 0.05) {
+      shown_lag_ = shown - slot_moment_[slot_]; shown_lag_kind_ = slot_kind_[slot_]; ++shown_lag_serial_;
+    }
+    if (shown_trace_) std::fprintf(shown_trace_, "%.6f,%.6f,%.6f\n", slot_cpu_start_[slot_], shown, slot_moment_[slot_]);
   }
   static uint64_t logged = 0;
   if (mask & 3) {
@@ -5735,6 +5750,7 @@ void D3D12Backend::submit_frame(const Frame& frame, const DrawMatrices* override
   {
     const double started = host::now_seconds();
     slot_cpu_start_[slot_] = started; slot_moment_[slot_] = pending_moment_; slot_shown_[slot_] = false;
+    slot_kind_[slot_] = pending_kind_; slot_present_[slot_] = 0.0;
     if (timer_freq_ && (clock_at_ < 0.0 || started - clock_at_ > 0.5)) {
       // The GPU's timestamps on the host clock, refreshed twice a second (the two clocks drift apart slowly).
       static const double qpc_hz = [] { LARGE_INTEGER f{}; QueryPerformanceFrequency(&f); return f.QuadPart > 0 ? (double)f.QuadPart : 1e7; }();
@@ -6058,6 +6074,7 @@ void D3D12Backend::submit_frame(const Frame& frame, const DrawMatrices* override
       yougame::parity::signals.presented(!test_only && SUCCEEDED(present_result) && frame.test_fill < 0);
       if (!test_only && SUCCEEDED(present_result) && frame.test_fill < 0) host::startup_first_frame();
       present_wait_ += Stopwatch::now() - present_call;   // a synced Present waits for the display (see gx_d3d11.cpp)
+      slot_present_[slot_] = present_call;
       if (!test_only) pacing_diagnostics_.present(present_call, opts_.vsync,
           present.interval, present.flags, opts_.fps_cap, fullscreen_state_.exclusive_active);
     } catch (const std::system_error& error) {
