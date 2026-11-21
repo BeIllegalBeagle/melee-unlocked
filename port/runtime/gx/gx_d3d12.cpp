@@ -186,7 +186,7 @@ namespace {
 #endif
 
 // execute_draw section costs (seconds) and draw count since the last profile line.
-double g_prof[18]; uint64_t g_prof_frames = 0; uint64_t g_prof_draws = 0, g_pso_hits = 0, g_pso_lookups = 0, g_pso_creates = 0, g_pso_skips = 0;
+double g_prof[20]; uint64_t g_prof_frames = 0; uint64_t g_prof_draws = 0, g_pso_hits = 0, g_pso_lookups = 0, g_pso_creates = 0, g_pso_skips = 0;
 struct Stopwatch {
   static double now() { return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
   double t = now(); double lap() { double n = now(), d = n - t; t = n; return d; }
@@ -5700,7 +5700,9 @@ void D3D12Backend::submit_frame(const Frame& frame, const DrawMatrices* override
   const uint64_t fence_completed = fence_->GetCompletedValue();
   const unsigned frames_queued = fence_value_ > fence_completed ? (unsigned)(fence_value_ - fence_completed) : 0u;
   slot_ = (int)(frame_counter_ % FRAME_SLOTS);
-  wait_fence(slot_fence_[slot_]);   // this slot's previous frame (FRAME_SLOTS frames ago) is complete
+  { Stopwatch fence_sw;
+    wait_fence(slot_fence_[slot_]);   // this slot's previous frame (FRAME_SLOTS frames ago) is complete
+    g_prof[17] += fence_sw.lap(); }
   diag("frame slot fence");
   if (scan_pending_[slot_]) read_flicker_scan();
   if (timer_pending_[slot_]) read_gpu_timers();
@@ -5922,9 +5924,12 @@ void D3D12Backend::submit_frame(const Frame& frame, const DrawMatrices* override
   // on the plain path: an upscaler, frame generation, path tracing, the Remix layer and captures keep
   // per-present history that a dropped present would leave half written.
   submit_cancelled_ = false;
+  // MELEE_TEST_CUT_WHILE_CAPTURING=1 (tests): presents are cut short during a capture too, so the captured
+  // frames after a cut can be compared with the same game frames drawn without any.
+  static const bool cut_while_capturing = [] { const char* v = host::test_env::getenv("MELEE_TEST_CUT_WHILE_CAPTURING"); return v && *v == '1'; }();
   bool cancellable = submit_cancel_ && !skip_present_ && screen && screen->clear && !mvec_out() && !opts_.path_tracing &&
                      !rtx_wanted() && !remix_layer_ && !remix_mode_ && fg_applied_ <= 0 && !fsr_active() && !xess_active() &&
-                     opts_.capture_path.empty() && !opts_.flicker_scan && !g_capture_request.load(std::memory_order_relaxed);
+                     (opts_.capture_path.empty() || cut_while_capturing) && !opts_.flicker_scan && !g_capture_request.load(std::memory_order_relaxed);
   for (size_t command_index = 0; command_index < frame.commands.size(); ++command_index) {
     const FrameCommand& cmd = frame.commands[command_index];
     if (cancellable && !submit_cancelled_ && (command_index & 7) == 0 && (*submit_cancel_)()) {
@@ -6541,9 +6546,9 @@ std::string d3d12_profile_line() {
            (unsigned long long)g_pso_hits, (unsigned long long)g_pso_lookups, 1e6 * g_prof[6] / l, 1e6 * g_prof[7] / l, (unsigned long long)g_pso_creates, (unsigned long long)g_pso_skips);
   const double f = (double)std::max<uint64_t>(1, g_prof_frames);
   char tail[320];
-  snprintf(tail, sizeof tail, " | per frame: panel %.3f, present pass %.3f, Present %.3f, whole %.3f ms (setup %.3f, geometry %.3f, begin %.3f, close and execute %.3f, end %.3f)",
+  snprintf(tail, sizeof tail, " | per frame: panel %.3f, present pass %.3f, Present %.3f, whole %.3f ms (setup %.3f of it GPU slot wait %.3f, geometry %.3f, begin %.3f, close and execute %.3f, end %.3f)",
            1e3 * g_prof[8] / f, 1e3 * g_prof[9] / f, 1e3 * g_prof[10] / f, 1e3 * g_prof[11] / f,
-           1e3 * g_prof[12] / f, 1e3 * g_prof[13] / f, 1e3 * g_prof[14] / f, 1e3 * g_prof[15] / f, 1e3 * g_prof[16] / f);
+           1e3 * g_prof[12] / f, 1e3 * g_prof[17] / f, 1e3 * g_prof[13] / f, 1e3 * g_prof[14] / f, 1e3 * g_prof[15] / f, 1e3 * g_prof[16] / f);
   std::string line = std::string(buf) + tail;
   std::memset(g_prof, 0, sizeof g_prof); g_prof_frames = 0; g_prof_draws = g_pso_hits = g_pso_lookups = g_pso_creates = g_pso_skips = 0;
   return line;

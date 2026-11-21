@@ -2369,6 +2369,7 @@ void load_pc_settings(RenderOptions& options, int& volume) {
       else if (key == "exclusivefullscreen") options.exclusive_fullscreen = value == "1";
       else if (key == "vsync") { options.vsync = value == "1"; vsync_seen = true; }
       else if (key == "vsyncchoice") vsync_choice_seen = value == "1";
+      else if (key == "vrrfound") options.vrr_found = value == "1";
       else if (key == "vsync_yougame") saved_vsync_yougame = value == "1";
       else if (key == "widescreen") options.widescreen = value == "1";
       else if (key == "fodreflections") options.fod_reflections = value != "0";
@@ -2762,6 +2763,10 @@ void load_pc_settings(RenderOptions& options, int& volume) {
   // Every save before this wrote "vsync 1" for players who never touched it, so only "vsync 0" (the
   // default was on) or the new "vsyncchoice 1" is a choice. Inside the YouGame app its own keys decide.
   options.vsync_auto = !g_display_keys.yougame && !vsync_choice_seen && (!vsync_seen || options.vsync);
+  if (options.vsync_auto && options.vrr_found) {
+    options.vsync = false;
+    host::log("present: vsync off from the start (automatic: G-Sync or FreeSync was found last time)");
+  }
   options.show_fps = yougame::display_defaults::show_fps(g_display_keys.yougame, options.show_fps, saved_showfps_yougame);
   if (g_display_keys.yougame)
     host::log("settings: vsync %s%s, fps counter %s (%s)", options.vsync ? "on" : "off",
@@ -5080,6 +5085,7 @@ static bool write_settings_file_impl(const SettingsState& state, const RenderOpt
        << "\nexclusivefullscreen " << options.exclusive_fullscreen
        << "\nvsync " << (g_display_keys.own_vsync ? g_display_keys.vsync : (options.vsync || options.vsync_auto))
        << (options.vsync_auto ? "" : "\nvsyncchoice 1")
+       << (options.vrr_found ? "\nvrrfound 1" : "")
        << (g_display_keys.own_vsync ? std::string("\nvsync_yougame ") + (options.vsync ? "1" : "0")
            : g_display_keys.saved_vsync_yougame >= 0 ? "\nvsync_yougame " + std::to_string(g_display_keys.saved_vsync_yougame) : std::string())
        << "\nwidescreen " << options.widescreen
@@ -6363,10 +6369,15 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
   if (options.vsync_auto) {   // not chosen: off with G-Sync or FreeSync, on otherwise (on while unknown)
     static const bool assume_vrr = [] { const char* v = std::getenv("MELEE_ASSUME_VRR"); return v && *v == '1'; }();   // tests only
     const int vrr = assume_vrr ? 1 : RenderOptions::live_variable_refresh().load(std::memory_order_relaxed);
-    const bool want = vrr != 1;
+    // Not known yet (the first seconds of a launch): what the last session found stands.
+    const bool want = vrr == 1 ? false : vrr == 0 ? true : !options.vrr_found;
     if (options.vsync != want) {
       options.vsync = want;
       host::log("present: vsync %s (automatic: %s)", want ? "on" : "off", vrr == 1 ? "G-Sync or FreeSync found" : "fixed refresh");
+    }
+    if (vrr >= 0 && options.vrr_found != (vrr == 1)) {   // remembered for the next launch
+      options.vrr_found = vrr == 1;
+      state.saved = write_settings_file(state, options);
     }
   }
   {   // the picture's shape as drawn (4:3 with bars, or wider): the room's small window goes in the bar

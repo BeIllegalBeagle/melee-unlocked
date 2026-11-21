@@ -207,7 +207,9 @@ class ThreadedBackend final : public Backend {
     }();
     host::log("presentation: phase timeline %s, keyframe %s", phase_timeline ? "tick" : "hand-over",
               keyframe_mode == KF_OFF ? "off" : keyframe_mode == KF_ANCHOR_ALL ? "anchor (all modes)" : keyframe_mode == KF_SNAP ? "snap" : "off");
+    double upkeep_seconds = 0; uint64_t upkeep_passes = 0;
     for (;;) {
+      const double upkeep_start = host::now_seconds();
       std::shared_ptr<std::promise<void>> reset;
       if (reset_pending_.load(std::memory_order_acquire)) {
         std::lock_guard<std::mutex> lock(reset_mutex_);
@@ -409,6 +411,7 @@ class ThreadedBackend final : public Backend {
       }
       // A present dropped for a newer frame comes straight back here: the upkeep above (window messages,
       // display checks) took 0.2 ms, which the new frame then waited for. Its results from this pass stand.
+      upkeep_seconds += host::now_seconds() - upkeep_start; ++upkeep_passes;
       take_frame:
       // Render every source at least once: EFB resources can depend on earlier commands.
       bool got_new = false;
@@ -617,7 +620,6 @@ class ThreadedBackend final : public Backend {
         double t1 = host::now_seconds();
         renderer->submit_frame(current);
         submit_seconds += host::now_seconds() - t1; ++cost_presented; ++arrival_exacts;
-        pair_now(false);   // for the in-between presents that follow; not part of this frame's way to the screen
       } else if (subframes && have_prev) {
         double t0 = host::now_seconds();
         // A repeated present's re-pose stops the moment a newer game frame is pushed (polled by the
@@ -650,6 +652,7 @@ class ThreadedBackend final : public Backend {
         submit_seconds += host::now_seconds() - t1; ++cost_presented;
       }
       const double render_end = host::now_seconds();
+      pair_now(false);   // after a frame presented as drawn: for the in-between presents that follow, not on its way to the screen
       if (retired_pending) { queue.recycle(std::move(retired)); retired_pending = false; }
       // Logged after the submit: a re-pose dropped for a newer frame (above) never reached the display.
       if (options_.capture_burst && options_.capture_sim_frame && current.sequence >= options_.capture_sim_frame && burst_logged < options_.capture_burst) {
@@ -846,6 +849,8 @@ class ThreadedBackend final : public Backend {
           }
           pacing_intervals.clear();
           host::log("render cost: solver %.2f ms/frame, submit %.2f ms/frame (%s)", 1000.0 * build_seconds / std::max<uint64_t>(1, cost_presented), 1000.0 * submit_seconds / std::max<uint64_t>(1, cost_presented), render_profile_line(renderer).c_str());
+          host::log("render loop: upkeep %.3f ms a pass over %llu passes", 1000.0 * upkeep_seconds / std::max<uint64_t>(1, upkeep_passes), (unsigned long long)upkeep_passes);
+          upkeep_seconds = 0; upkeep_passes = 0;
           build_seconds = submit_seconds = 0; cost_presented = 0;
           if (authored) {
             const AuthoredStats& a = authored_stats();
