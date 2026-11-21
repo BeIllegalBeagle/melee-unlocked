@@ -814,6 +814,14 @@ struct Backend {
   virtual void submit_frame(const Frame& frame, const DrawMatrices* overrides) { (void)overrides; submit_frame(frame); }
   // Drain mode: execute the frame's commands (copies, clears, uploads) but do not blit or present it.
   virtual void set_skip_present(bool) {}
+  // A submit that may be cut short: while `cancel` is set, the renderer polls it between draws and,
+  // once it answers true, records no more of the frame and does not present it (the frame's clears
+  // still run, so the next frame starts from an empty EFB). Only for a repeated present of a frame
+  // already shown once: its texture copies exist from that first present. submit_cancelled() says
+  // whether the last submit ended that way. Renderers that cannot do it never cancel.
+  virtual void set_submit_cancel(const std::function<bool()>*) {}
+  virtual bool submit_cancelled() const { return false; }
+  virtual double submit_cancel_time() const { return 0.0; }   // latency trace: when the last cancel was noticed (now_seconds)
 };
 
 void init(Backend* backend);
