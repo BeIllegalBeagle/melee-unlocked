@@ -140,10 +140,14 @@ class ThreadedBackend final : public Backend {
     // instead of waiting for the next slot of the cap's grid; the in-between presents of that tick are
     // then spaced evenly up to the predicted next hand-over, so the next one never meets the display's
     // minimum interval. A fixed-refresh display keeps the plain grid (uneven presents judder there).
-    // Still off (measured again 11-21 at a cap of 189, hidden, variable refresh assumed): about 1.3 ms less
-    // delay, but steps over 2 ms in the shown time rose from 13-48 to 124-195 per 1000 frames, and the
-    // frame-locked grid below did the same (193). The even grid stays.
-    static const bool handover_env = [] { const char* v = std::getenv("MELEE_PRESENT_ON_HANDOVER"); return v && *v == '1'; }();
+    // On for G-Sync and FreeSync displays (11-21): with a frame cap a new game frame waited for the next slot
+    // of the cap's grid and for its re-pose. It is presented on arrival, as drawn when its moment is the
+    // frame's own. Measured hidden at a cap of 189, variable refresh assumed, two quiet rounds: 1.4 to 1.6 ms
+    // less delay (5.2-5.8 -> 3.9-4.2 ms), steps over 2 ms in the shown time 3.3-10.4 -> 1.7-2.0 per 1000
+    // frames, over 1 ms 32-56 -> 41-66. That needs the levelling below (kind_level): without it the same
+    // path had 260-284 steps over 1 ms, which is why it stayed off after the first tries (10-23, 11-21).
+    // A fixed-refresh display keeps the grid. MELEE_PRESENT_ON_HANDOVER=0 (tests): the grid everywhere.
+    static const bool handover_env = [] { const char* v = std::getenv("MELEE_PRESENT_ON_HANDOVER"); return !(v && *v == '0'); }();
     // Frame-locked grid (MELEE_PRESENT_LOCK=1): on a variable refresh display the grid period is a
     // whole fraction of the game frame and a new frame is presented on arrival (below).
     static const bool present_lock = [] { const char* v = std::getenv("MELEE_PRESENT_LOCK"); return v && *v == '1'; }();
@@ -182,8 +186,20 @@ class ThreadedBackend final : public Backend {
     // Lossless adapter 11-20: uncapped was 2.4 ms slower to the screen than 60 locked, which is
     // these two steps plus the wait above. MELEE_ARRIVAL_EXACT=0 (tests): the old path.
     static const bool arrival_exact_on = [] { const char* v = std::getenv("MELEE_ARRIVAL_EXACT"); return !(v && *v == '0'); }();
-    constexpr double kArrivalPhase = 0.0015 / SIM_PERIOD;
+    // MELEE_ARRIVAL_PHASE_MS (tests): how far from the frame's own moment a frame may be and still be shown as drawn.
+    static const double kArrivalPhase = [] { const char* v = std::getenv("MELEE_ARRIVAL_PHASE_MS"); return (v && *v ? std::atof(v) : 1.5) / 1000.0 / SIM_PERIOD; }();
     bool pair_pending = false;   // frames[cur] is not paired with its previous frame yet
+    // With a frame cap (present on arrival, variable refresh) a frame shown as drawn is released the
+    // instant it is ready. The game takes 0.5 to 1 ms longer on some ticks than others, so the frame
+    // reaches the screen that much earlier or later after the moment it shows. Holding it to a fixed
+    // point after its tick's start trades delay for evenness, measured 11-21 at a cap of 189 (hidden,
+    // two quiet rounds; ms, then steps over 1 ms and over 2 ms per 1000 frames): at once 3.98 | 61 | 0.5,
+    // held to the usual ready time 4.69 | 31 | 0.8, held to the late edge 4.76 | 25 | 1.0, every frame
+    // re-posed instead (MELEE_ARRIVAL_PHASE_MS=0) 5.02 | 3 | 0.4, the grid 5.17 | 16 | 1.1. At once is the
+    // default: its small steps match what the grid had before the levelling (32 to 56), with fewer
+    // large ones. MELEE_ARRIVAL_HOLD (tests): "usual" or "late" hold the frame.
+    static const int arrival_hold = [] { const char* v = std::getenv("MELEE_ARRIVAL_HOLD"); return v && *v == 'u' ? 1 : v && *v == 'l' ? 2 : 0; }();
+    double arrival_ready_late = 0.0;   // tick start to "recorded and ready", late edge
     uint64_t arrival_exacts = 0;
     // The frame queue's condition variable wakes this thread 0.2 ms after a push on a quiet PC and
     // 1 ms or more on a busy one. With sub-frames off (60 locked) that is added to every frame, so
@@ -622,8 +638,18 @@ class ThreadedBackend final : public Backend {
       }
       // A hand-over present goes out now: the grid slot it replaces is no deadline for it, only half
       // a period after the last present, so two presents never queue back to back.
+      double arrival_release = 0.0;
+      if (arrival_hold && arrival_exact && handover_now && current.tick.target > 0.0) {
+        // When this frame will be recorded, from its tick's start; the release point follows the late edge.
+        const double first = submit_first_typical > 0.0 ? submit_first_typical : submit_typical;
+        const double ready = host::now_seconds() + first - current.tick.target;
+        if (ready > 0.0 && ready < SIM_PERIOD) {
+          arrival_ready_late = arrival_ready_late > 0.0 ? arrival_ready_late + (arrival_hold == 2 ? (ready > arrival_ready_late ? 0.25 : 0.01) : 0.05) * (ready - arrival_ready_late) : ready;
+          arrival_release = current.tick.target + arrival_ready_late;
+        }
+      }
       renderer->set_present_deadline(!(subframes && cap_period > 0 && !reflex_pacing) || scanline_active ? 0
-                                     : handover_now ? (last_submission > 0 ? last_submission + 0.5 * cap_period : 0) : next_present);
+                                     : handover_now ? std::max(last_submission > 0 ? last_submission + 0.5 * cap_period : 0.0, arrival_release) : next_present);
       solver_pair_counter().store(subframes ? solver.pair_count() : 0, std::memory_order_relaxed);   // for the backends' "gpu:" line
       renderer->note_shown_moment(shown_moment);
       renderer->note_shown_kind(current.sequence == rendered_sequence ? 1 : 0);
