@@ -1,6 +1,5 @@
-"""Automatic V-Sync (never chosen by the player): a launch starts with V-Sync off when the last session
-found G-Sync or FreeSync, instead of on until it is found again. A choice in the panel still wins, and
-a display found to be fixed turns V-Sync back on and is remembered too."""
+"""Automatic V-Sync (never chosen by the player) is off on every display, from the start of a launch.
+A choice in the panel still wins. What the display was found to be is still remembered."""
 from pathlib import Path
 import unittest
 
@@ -21,12 +20,12 @@ class VsyncRememberedWiringTest(unittest.TestCase):
         self.assertIn("bool vrr_found = false;", source("port/runtime/gx/render_options.h"))
 
     def test_only_while_automatic(self):
-        self.assertIn("if (options.vsync_auto && options.vrr_found) {\n    options.vsync = false;", self.settings.replace("\r\n", "\n"))
+        self.assertIn("if (options.vsync_auto) {\n    options.vsync = false;", self.settings.replace("\r\n", "\n"))
         # The panel's toggle ends the automatic rule, as before.
         self.assertIn('if (settings_toggle("VSync (prevents tearing)", &options.vsync)) { changed = true; options.vsync_auto = false; }', self.settings)
 
     def test_unknown_keeps_the_last_finding_and_a_verdict_is_saved(self):
-        self.assertIn("const bool want = vrr == 1 ? false : vrr == 0 ? true : !options.vrr_found;", self.settings)
+        self.assertIn("const bool want = false;", self.settings)
         self.assertIn("if (vrr >= 0 && options.vrr_found != (vrr == 1)) {", self.settings)
 
 

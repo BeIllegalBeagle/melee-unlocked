@@ -140,6 +140,9 @@ class ThreadedBackend final : public Backend {
     // instead of waiting for the next slot of the cap's grid; the in-between presents of that tick are
     // then spaced evenly up to the predicted next hand-over, so the next one never meets the display's
     // minimum interval. A fixed-refresh display keeps the plain grid (uneven presents judder there).
+    // Still off (measured again 11-21 at a cap of 189, hidden, variable refresh assumed): about 1.3 ms less
+    // delay, but steps over 2 ms in the shown time rose from 13-48 to 124-195 per 1000 frames, and the
+    // frame-locked grid below did the same (193). The even grid stays.
     static const bool handover_env = [] { const char* v = std::getenv("MELEE_PRESENT_ON_HANDOVER"); return v && *v == '1'; }();
     // Frame-locked grid (MELEE_PRESENT_LOCK=1): on a variable refresh display the grid period is a
     // whole fraction of the game frame and a new frame is presented on arrival (below).
@@ -462,8 +465,8 @@ class ThreadedBackend final : public Backend {
       };
       if (got_new && subframes) {
         pair_pending = true;
-        const bool may_wait = arrival_exact_on && authored && !interpolate && cap_period <= 0.0 && !reflex_pacing &&
-                              !scanline_active && !handover_present && options_.pin_phase < 0 && have_prev && queue.size() == 0;
+        const bool may_wait = arrival_exact_on && authored && !interpolate && (cap_period <= 0.0 || (handover_present && vrr == 1)) &&
+                              !reflex_pacing && !scanline_active && options_.pin_phase < 0 && have_prev && queue.size() == 0;
         if (!may_wait) pair_now(true);
       }
       if (!subframes) pair_pending = false;

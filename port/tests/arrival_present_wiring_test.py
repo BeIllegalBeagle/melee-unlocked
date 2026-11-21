@@ -32,9 +32,9 @@ class ArrivalPresentWiringTest(unittest.TestCase):
         self.assertIn("if (cancellable) renderer->set_submit_cancel(&newer);", backend)
         self.assertIn("renderer->set_submit_cancel(nullptr);", backend)
 
-    def test_arrival_frame_is_uncapped_predict_only_and_pairs_after(self):
+    def test_arrival_frame_is_predict_only_uncapped_or_variable_refresh_and_pairs_after(self):
         backend = source("port/runtime/gx/threaded_backend.cpp")
-        self.assertIn("const bool may_wait = arrival_exact_on && authored && !interpolate && cap_period <= 0.0 && !reflex_pacing &&", backend)
+        self.assertIn("const bool may_wait = arrival_exact_on && authored && !interpolate && (cap_period <= 0.0 || (handover_present && vrr == 1)) &&", backend)
         self.assertIn("if (pair_pending && current.sequence != rendered_sequence && !interpolate && t <= kArrivalPhase) {", backend)
         self.assertIn("constexpr double kArrivalPhase = 0.0015 / SIM_PERIOD;", backend)
         # Every path that does not present the frame as drawn pairs before it uses the solver.

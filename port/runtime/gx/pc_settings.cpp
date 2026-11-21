@@ -2763,9 +2763,9 @@ void load_pc_settings(RenderOptions& options, int& volume) {
   // Every save before this wrote "vsync 1" for players who never touched it, so only "vsync 0" (the
   // default was on) or the new "vsyncchoice 1" is a choice. Inside the YouGame app its own keys decide.
   options.vsync_auto = !g_display_keys.yougame && !vsync_choice_seen && (!vsync_seen || options.vsync);
-  if (options.vsync_auto && options.vrr_found) {
+  if (options.vsync_auto) {
     options.vsync = false;
-    host::log("present: vsync off from the start (automatic: G-Sync or FreeSync was found last time)");
+    host::log("present: vsync off from the start (automatic)");
   }
   options.show_fps = yougame::display_defaults::show_fps(g_display_keys.yougame, options.show_fps, saved_showfps_yougame);
   if (g_display_keys.yougame)
@@ -6370,10 +6370,13 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
     static const bool assume_vrr = [] { const char* v = std::getenv("MELEE_ASSUME_VRR"); return v && *v == '1'; }();   // tests only
     const int vrr = assume_vrr ? 1 : RenderOptions::live_variable_refresh().load(std::memory_order_relaxed);
     // Not known yet (the first seconds of a launch): what the last session found stands.
-    const bool want = vrr == 1 ? false : vrr == 0 ? true : !options.vrr_found;
+    // Off on every display since 1.0 (owner, 11-21): V-Sync's wait was the largest single part of the
+    // delay a fresh install had (a menu press: 23.8 ms with it, 14.4 without, on a 200 Hz screen). A
+    // fixed-refresh screen can tear; the V-Sync toggle is the player's choice and ends this rule.
+    const bool want = false;
     if (options.vsync != want) {
       options.vsync = want;
-      host::log("present: vsync %s (automatic: %s)", want ? "on" : "off", vrr == 1 ? "G-Sync or FreeSync found" : "fixed refresh");
+      host::log("present: vsync off (automatic; %s)", vrr == 1 ? "G-Sync or FreeSync found" : vrr == 0 ? "fixed refresh, frames can tear" : "display not judged yet");
     }
     if (vrr >= 0 && options.vrr_found != (vrr == 1)) {   // remembered for the next launch
       options.vrr_found = vrr == 1;
