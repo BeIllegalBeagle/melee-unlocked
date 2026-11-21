@@ -946,6 +946,7 @@ void bp_write(uint32_t value) {
           }
         }
         g_frame.time = host::now_seconds(); // completed snapshot availability anchors presentation
+        host::note_frame_handover();
         g_frame.tick = host::tick_timing();
         g_frame.discontinuous = g_discontinuity;
         g_frame.hard_cut = g_hard_cut;

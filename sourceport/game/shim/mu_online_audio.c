@@ -81,6 +81,14 @@ static void logf_(const char* fmt, int a, int b, int c, int d, int e, int f)
     mu_online_abi_log(line);
 }
 
+/* Sounds are also tracked per engine frame while the offline tick re-run is armed (shim/mu_redo.c):
+ * a tick run a second time adopts the voices its first run started, exactly as a rollback does. */
+int mu_redo_tracking(void);
+static int audio_on(void)
+{
+    return mu_online_active() || mu_console_rollback_active() || mu_redo_tracking();
+}
+
 static int engine_frame(void)
 {
     return (int) (mu_console_rollback_active() ? mu_gm_engine_state()->unk_0 :
@@ -91,7 +99,7 @@ static int engine_frame(void)
  * A sound an event handler starts between bodies belongs to no frame a re-simulation repeats. */
 static int sfx_hooks_on(void)
 {
-    return (mu_online_active() || mu_console_rollback_active()) && (mu_gm_engine_state()->unk_C == 0 || mu_console_rollback_active()) && audio.in_body;
+    return audio_on() && (mu_gm_engine_state()->unk_C == 0 || mu_console_rollback_active()) && audio.in_body;
 }
 
 /* What the ring holds for a frame that can no longer be rolled back, sorted, for comparing runs. */
@@ -176,7 +184,7 @@ void mu_online_audio_match_start(int local_index, int input_source)
 
 void mu_online_audio_frame_begin(void)
 {
-    if ((mu_online_active() || mu_console_rollback_active()) && (mu_gm_engine_state()->unk_C == 0 || mu_console_rollback_active())) {
+    if (audio_on() && (mu_gm_engine_state()->unk_C == 0 || mu_console_rollback_active())) {
         audio.in_body = 1;
     }
 }
@@ -272,7 +280,7 @@ void mu_online_audio_frame_end(void)
 {
     SfxFrame* s;
     int current, i, n = 0;
-    if (!(mu_online_active() || mu_console_rollback_active()) || (mu_gm_engine_state()->unk_C != 0 && !mu_console_rollback_active())) {
+    if (!audio_on() || (mu_gm_engine_state()->unk_C != 0 && !mu_console_rollback_active())) {
         return;
     }
     audio.in_body = 0;

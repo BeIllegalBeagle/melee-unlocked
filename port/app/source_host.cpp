@@ -1576,6 +1576,7 @@ void h_poll() {
   }
   // A re-simulated frame never waits on the machine; count it if something does.
   if (g_resim) { ++g_resim_polls; rollback_frame_callback(); return; }
+  if (host::tick_redo_active()) return;   // a tick being run again: no time passes, nothing is due
   guarded([] {
     take_console_catch_up();
     host::advance_time(2048);   // time flows in busy waits, as it does for the recompiled build
@@ -1587,7 +1588,10 @@ void h_poll() {
       else g_game.fire_alarms(engine.clock_ticks());
       return;
     }
-    if (host::retrace_due()) host::retrace();
+    if (host::retrace_due()) {
+      if (!host::tick_redo_presleep()) return;   // the controller changed: back to the game's gate, the retrace comes after
+      host::retrace();
+    }
     else g_game.fire_alarms(host::cpu->tb);
   });
 }
@@ -2284,6 +2288,55 @@ constexpr int32_t kLabFrame = -1000000;
 // payload s32 next replay frame (BE), u8 0 ask / 1 restore now. Defined with the replay host below.
 constexpr uint8_t CMD_REPLAY_GATE = 0xFA;
 uint8_t replay_gate(int32_t frame, uint8_t phase);
+// Tick re-run (host.h tick_redo_*, shim/mu_redo.c): op 1 after a drawn frame (keep the state, arm when a
+// match is running), 0 not possible now, 2 the gate's question, 3 go back to the state the current tick
+// started from. Two states matter: the one taken after the previous tick's frame (what the current tick
+// started from, the target of a re-run) and the one taken after the current tick's frame (the next
+// tick's start). Going back drops the second: the re-run's own frame replaces it.
+constexpr uint8_t CMD_TICK_REDO = 0xC7;
+constexpr int32_t kRedoBase = -900000;   // above the Lab's state, below any match frame
+uint8_t tick_redo(uint8_t op) {
+  static int32_t next_id = kRedoBase, start_id = 0, end_id = 0;   // 0: none kept
+  static bool have_start = false, have_end = false;
+  if (!host::tick_redo_enabled()) return 0;
+  if (op == 2) return host::tick_redo_wanted() && have_start ? 1 : 0;
+  if (op == 3) {
+    if (!have_start || !g_savestates.active() || !g_savestates.load_keep(start_id)) {
+      host::log("tick re-run: the tick's starting state is gone; this body runs as a new tick");
+      have_start = have_end = false;
+      host::tick_redo_arm(false);
+      return 0;
+    }
+    have_end = false;   // dropped by the load
+    gx::mark_discontinuity();
+    host::tick_redo_begin();
+    return 1;
+  }
+  if (op == 1) {
+    uint32_t major = 0, minor = 0, match_frame = 0;
+    host::current_scene(&major, &minor, &match_frame);
+    static uint32_t last_match_frame = 0;
+    const bool rerun = host::tick_redo_active();   // this frame is a tick drawn a second time
+    const bool playing = major == 2 && minor == 2 && match_frame > 60 && (rerun || match_frame != last_match_frame);
+    last_match_frame = match_frame;
+    if (!playing) { have_start = have_end = false; host::tick_redo_arm(false); return 0; }
+    if (!g_savestates.active()) begin_native_savestates();
+    if (next_id >= -1000) next_id = kRedoBase;   // hours of ticks later
+    // A new tick's frame: its start is what the last frame ended with. A re-run's frame: the start stays.
+    if (!rerun) { have_start = have_end; start_id = end_id; }
+    end_id = next_id++;
+    g_savestates.capture(end_id);
+    have_end = true;
+    static uint64_t captures = 0;
+    if (++captures % 3600 == 1)
+      host::log("tick re-run: state kept each tick, %.2f ms on average, %.2f at most", g_savestates.stats().capture_ms_total / std::max<uint64_t>(1, g_savestates.stats().captures), g_savestates.stats().capture_ms_max);
+    host::tick_redo_arm(have_start);
+    return have_start ? 1 : 0;
+  }
+  have_start = have_end = false;
+  host::tick_redo_arm(false);
+  return 0;
+}
 void lab_save() {
   if (!g_savestates.active()) begin_native_savestates();
   g_savestates.capture(kLabFrame);
@@ -2800,6 +2853,7 @@ int32_t h_slippi_command(uint8_t command, const uint8_t* payload, uint32_t paylo
         if (c == slippi::online::CMD_FIND_OPPONENT) g_online_games = 0;   // replay game numbers restart
         if (c == slippi::online::CMD_LOAD_SAVESTATE) { native_load((int32_t)read_be32(p), p); return true; }
         if (c == CMD_SELFTEST_KEEP && n == 4) { g_savestates.keep_reference((int32_t)read_be32(p)); return true; }
+        if (c == CMD_TICK_REDO && n == 1) { reply.push_back(tick_redo(p[0])); return true; }
         if (c == CMD_LAB_SAVE) { lab_save(); return true; }
         if (c == CMD_LAB_LOAD) { lab_load(); return true; }
         if (c == CMD_REPLAY_GATE && n == 5) { reply.push_back(replay_gate((int32_t)read_be32(p), p[4])); return true; }
@@ -3307,6 +3361,7 @@ void h_vi_wait_retrace() {
 // MELEE_AUDIO_PACING=0 turns it off for comparisons.
 int32_t h_vi_idle_step() {
   if (yougame::console::console_active()) return 0; // wall-time audio pacing cannot schedule game work
+  if (host::tick_redo_active() || host::tick_redo_wanted()) return 0;   // the gate comes first
   take_console_catch_up();
   static const bool enabled = [] { const char* v = std::getenv("MELEE_AUDIO_PACING"); return !(v && *v == '0'); }();
   // MELEE_AUDIO_PACING_TRACE=1: why the idle loop stops, counted and logged every 600 calls.

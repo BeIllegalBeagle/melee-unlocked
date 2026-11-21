@@ -1184,6 +1184,11 @@ int mu_online_engine_gate(int* count)
         return 1;
     }
     if (!hooks_on()) {
+        int mu_redo_gate(void);
+        if (*count == 0 && mu_redo_gate()) {   /* tick re-run (shim/mu_redo.c), offline only */
+            *count = 1;
+            return 1;
+        }
         return *count != 0;
     }
     mu_online.loop_entered = 1;
@@ -1588,6 +1593,10 @@ int mu_online_frame_end(void)
     int current;
     if (mu_online.console_active) return console_frame_end();
     if (!hooks_on()) {
+        int mu_redo_tracking(void);
+        if (mu_redo_tracking()) {
+            mu_online_audio_frame_end();   /* tick re-run (shim/mu_redo.c): this body's sounds */
+        }
         return ENGINE_CONTINUE;
     }
     mu_online_audio_frame_end();
