@@ -23,6 +23,7 @@ void mu_alarms_hold(void);
 void mu_alarms_release(void);
 void mu_online_audio_match_start(int local_index, int input_source);
 void mu_online_audio_frame_begin(void);
+void mu_online_audio_counts(unsigned int* started, unsigned int* adopted, unsigned int* stopped);
 void fn_800195FC(void);
 extern char* getenv(const char* name);
 
@@ -116,11 +117,19 @@ void mu_redo_frame_begin(void)
     mu_alarms_release();
     redo_pending = 0;   /* the load brought back the value from before the wait */
     if (ok) {
+        static unsigned int runs;
+        if (++runs % 50 == 0) {
+            unsigned int started, adopted, stopped;
+            mu_online_audio_counts(&started, &adopted, &stopped);
+            OSReport("[redo] %u ticks run twice; sounds since the ring was emptied: %u started, %u taken over from a first run, %u stopped\n", runs, started, adopted, stopped);
+        }
+        {
         const int buffer = redo_pending_buffer();   /* video state is outside the kept state */
         if (buffer >= 0) {
             HSD_VIData.xfb[buffer].status = HSD_VI_XFB_DRAWING;
         }
         fn_800195FC();   /* the pad alarm's own work: the controller as it is now, for this body */
+        }
     }
     if (mu_redo_tracking()) {
         mu_online_audio_frame_begin();   /* this body adopts the sounds the first run started */

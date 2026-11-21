@@ -2618,8 +2618,8 @@ static void midtick_note_poll() {
   g_midtick_polled = held;
 }
 static const struct MidtickTest {
-  unsigned every = 0; double offset = 0.0;
-  MidtickTest() { if (const char* v = std::getenv("MELEE_TEST_MIDTICK_PRESS")) { double ms = 0; if (std::sscanf(v, "%u:%lf", &every, &ms) == 2) offset = ms / 1000.0; else every = 0; } }
+  unsigned every = 0, shift = 0; double offset = 0.0;   // <every n ticks>:<ms into the tick>[:<ticks earlier>]
+  MidtickTest() { if (const char* v = std::getenv("MELEE_TEST_MIDTICK_PRESS")) { double ms = 0; if (std::sscanf(v, "%u:%lf:%u", &every, &ms, &shift) >= 2) offset = ms / 1000.0; else every = 0; } }
 } g_midtick_test;
 bool input_midtick_test() { return g_midtick_test.every != 0; }
 bool input_changed_since_poll(double tick_start) {
@@ -2629,7 +2629,7 @@ bool input_changed_since_poll(double tick_start) {
     const uint32_t tick = retrace_count();
     uint32_t major = 0, minor = 0, match_frame = 0;
     current_scene(&major, &minor, &match_frame);
-    const uint32_t phase = tick % g_midtick_test.every;
+    const uint32_t phase = (tick + g_midtick_test.shift) % g_midtick_test.every;
     if (match_frame > 120 && tick != fired && (phase == 0 || phase == 6) && now_seconds() - tick_start >= g_midtick_test.offset) {
       fired = tick;
       g_test_hold.store(phase == 0 ? PAD_X : 0, std::memory_order_relaxed);

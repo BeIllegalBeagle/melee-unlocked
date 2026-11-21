@@ -428,6 +428,13 @@ void mu_online_audio_rollback_end(void)
     motor_reconcile();
 }
 
+/* The tick re-run's proof that sounds are not doubled (shim/mu_redo.c): starts given a new voice, starts
+ * that adopted the voice the tick's first run made, and voices stopped because the second run dropped them. */
+void mu_online_audio_counts(unsigned int* started, unsigned int* adopted, unsigned int* stopped)
+{
+    *started = audio.started; *adopted = audio.adopted; *stopped = audio.stopped;
+}
+
 void mu_online_audio_match_exit(void)
 {
     int i;

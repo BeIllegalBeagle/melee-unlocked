@@ -3534,8 +3534,9 @@ void tick_redo_begin() {
     log("tick re-run: %llu so far (this one %.2f ms into its tick)", (unsigned long long)g_redo_total, (now_seconds() - g_frame_time) * 1000.0);
 }
 static bool redo_watching() { return (g_redo_on && g_redo_armed && !g_redo_active) || input_midtick_test(); }
-// From the waits between ticks. True: the wait ends now, for a re-run. The window ends 11.5 ms into the
-// tick: later than that the next tick shows the change as soon as a re-run would.
+// From the waits between ticks. True: the wait ends now, for a re-run. The window ends 14.5 ms into the
+// tick, so the second run (about 2 ms of game work) is over before the next tick is due. Measured 11-21:
+// a press 13 ms in waited 6.2 ms for its picture without a re-run, against 3.4 to 4.9 ms with one.
 static bool redo_wait_check() {
   if (g_redo_wanted) {
     // Asked for but not taken within 1.5 ms (the game is not at its gate): this tick has none.
@@ -3545,7 +3546,7 @@ static bool redo_wait_check() {
   }
   const bool changed = input_changed_since_poll(g_frame_time);
   if (!g_redo_on || !g_redo_armed || g_redo_active || g_redo_runs >= 2 || !changed) return false;
-  if (now_seconds() - g_frame_time > 0.0115) return false;
+  if (now_seconds() - g_frame_time > 0.0145) return false;
   g_redo_wanted = true; g_redo_wanted_at = now_seconds();
   return true;
 }
