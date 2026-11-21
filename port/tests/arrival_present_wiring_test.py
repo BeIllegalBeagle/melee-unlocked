@@ -45,11 +45,11 @@ class ArrivalPresentWiringTest(unittest.TestCase):
     def test_capped_variable_refresh_presents_on_arrival_and_levels_the_two_kinds(self):
         backend = source("port/runtime/gx/threaded_backend.cpp")
         # On unless switched off, and only ever used on a display found to follow the frames.
-        self.assertIn('static const bool handover_env = [] { const char* v = std::getenv("MELEE_PRESENT_ON_HANDOVER"); return !(v && *v == '0'); }();', backend)
+        self.assertIn("static const bool handover_env = [] { const char* v = std::getenv(\"MELEE_PRESENT_ON_HANDOVER\"); return !(v && *v == '0'); }();", backend)
         self.assertIn("handover_now = handover_present && vrr == 1 && !reflex_pacing && cap_period > 0 && current.sequence != rendered_sequence;", backend)
         # A frame shown as drawn is released at once by default; holding it is a test switch.
         self.assertIn("return v && *v == 'u' ? 1 : v && *v == 'l' ? 2 : 0; }();", backend)
-        self.assertIn('static const bool kind_level = [] { const char* v = std::getenv("MELEE_KIND_LEVEL"); return !(v && *v == '0'); }();', backend)
+        self.assertIn("static const bool kind_level = [] { const char* v = std::getenv(\"MELEE_KIND_LEVEL\"); return !(v && *v == '0'); }();", backend)
         self.assertIn("repeat_shift = std::min(std::max(repeat_shift + 0.02 * (kind_lag[0] - kind_lag[1]), -0.003), 0.003);", backend)
         d3d12 = source("port/runtime/gx/gx_d3d12.cpp")
         self.assertIn("const double shown = std::max(gpu_end, slot_present_[slot_]);", d3d12)
