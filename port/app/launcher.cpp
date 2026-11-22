@@ -2367,6 +2367,10 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
       create_replay_controls();
       select_tab(0);
       load_ini();
+      if (launcher::yougame::adopt_staging_app()) {
+        log_line("yougame: only the YouGame Staging app is installed: using YouGame Staging (launcher.ini yougame_env=staging)");
+        save_ini();
+      }
 #ifdef MELEE_NO_SLIPPI
       // An older version kept in Versions is the other Game Build, and nothing here could switch
       // back from one: the current install always.
