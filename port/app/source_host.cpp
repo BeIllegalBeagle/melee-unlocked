@@ -2317,7 +2317,9 @@ uint8_t tick_redo(uint8_t op) {
     host::current_scene(&major, &minor, &match_frame);
     static uint32_t last_match_frame = 0;
     const bool rerun = host::tick_redo_active();   // this frame is a tick drawn a second time
-    const bool playing = major == 2 && minor == 2 && match_frame > 60 && (rerun || match_frame != last_match_frame);
+    // Not while the match is being recorded or streamed to spectators: a tick run twice would be written twice.
+    static const bool recording = std::getenv("MELEE_SOURCE_RECORD") != nullptr;
+    const bool playing = !recording && major == 2 && minor == 2 && match_frame > 60 && (rerun || match_frame != last_match_frame);
     last_match_frame = match_frame;
     if (!playing) { have_start = have_end = false; host::tick_redo_arm(false); return 0; }
     if (!g_savestates.active()) begin_native_savestates();

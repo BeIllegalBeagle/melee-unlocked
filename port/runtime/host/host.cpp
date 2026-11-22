@@ -3545,7 +3545,14 @@ static bool redo_wait_check() {
     return false;
   }
   const bool changed = input_changed_since_poll(g_frame_time);
-  if (!g_redo_on || !g_redo_armed || g_redo_active || g_redo_runs >= 2 || !changed) return false;
+  // MELEE_TEST_REDO_EVERY=<n>:<ms> (tests): every n-th tick is run again <ms> in with nothing changed, so
+  // the game after it must be exactly the game without it, whatever sounds and effects that tick started.
+  static const struct Forced {
+    unsigned every = 0; double at = 0.0;
+    Forced() { if (const char* v = host::test_env::getenv("MELEE_TEST_REDO_EVERY")) { double ms = 0; if (std::sscanf(v, "%u:%lf", &every, &ms) == 2) at = ms / 1000.0; else every = 0; } }
+  } forced_test;
+  const bool forced = forced_test.every && g_retraces % forced_test.every == 0 && g_redo_runs == 0 && now_seconds() - g_frame_time >= forced_test.at;
+  if (!g_redo_on || !g_redo_armed || g_redo_active || g_redo_runs >= 2 || !(changed || forced)) return false;
   if (now_seconds() - g_frame_time > 0.0145) return false;
   g_redo_wanted = true; g_redo_wanted_at = now_seconds();
   return true;

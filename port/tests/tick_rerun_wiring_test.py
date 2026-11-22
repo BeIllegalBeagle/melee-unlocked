@@ -33,7 +33,8 @@ class TickRerunWiringTest(unittest.TestCase):
 
     def test_only_a_running_offline_vs_match(self):
         app = source("port/app/source_host.cpp")
-        self.assertIn("const bool playing = major == 2 && minor == 2 && match_frame > 60 && (rerun || match_frame != last_match_frame);", app)
+        self.assertIn("const bool playing = !recording && major == 2 && minor == 2 && match_frame > 60 && (rerun || match_frame != last_match_frame);", app)
+        self.assertIn('static const bool recording = std::getenv("MELEE_SOURCE_RECORD") != nullptr;', app)
 
     def test_goes_back_to_the_ticks_own_start(self):
         app = source("port/app/source_host.cpp")
