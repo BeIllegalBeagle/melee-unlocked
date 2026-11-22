@@ -6221,7 +6221,8 @@ int run(void (*shutdown)(int)) {
   // With the spectator server on, offline matches are recorded too, for the broadcast only (no .slp
   // unless --record-native asked for one): Slippi Dolphin sends every game it records, offline ones
   // included. Set before the game library loads, so its C runtime sees it.
-  if (!std::getenv("MELEE_SOURCE_RECORD") &&
+  // Not with the experimental tick re-run: it never runs while a match is recorded, so it would never run.
+  if (!std::getenv("MELEE_SOURCE_RECORD") && !host::tick_redo_enabled() &&
       yougame::mode_policy::spectator_allowed(yougame::active(), gx::RenderOptions::live_slippi_spectator())) {
     _putenv_s("MELEE_SOURCE_RECORD", "2");
     SetEnvironmentVariableA("MELEE_SOURCE_RECORD", "2");

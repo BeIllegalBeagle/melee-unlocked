@@ -117,6 +117,11 @@ void mu_redo_frame_begin(void)
     mu_alarms_release();
     redo_pending = 0;   /* the load brought back the value from before the wait */
     if (ok) {
+        /* ... and the armed flag as it was when that state was kept, which is "not yet" for the first
+         * state of a stretch of play (it is kept before the flag is set). A tick is only ever run again
+         * while armed, and its second run must find the sounds of its first: without this such a tick
+         * ran untracked, started its sounds a second time and emptied the sound ring after it. */
+        redo_armed = 1;
         static unsigned int runs;
         if (++runs % 50 == 0) {
             unsigned int started, adopted, stopped;

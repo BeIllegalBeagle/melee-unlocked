@@ -50,6 +50,18 @@ class TickRerunWiringTest(unittest.TestCase):
         audio = source("sourceport/game/shim/mu_online_audio.c")
         self.assertIn("return mu_online_active() || mu_console_rollback_active() || mu_redo_tracking();", audio)
 
+    def test_a_second_run_is_always_tracked(self):
+        # The state a tick starts from can hold "not armed" (it is kept before the flag is set): the
+        # load must not leave a second run untracked, or its sounds start twice.
+        shim = source("sourceport/game/shim/mu_redo.c")
+        begin = shim[shim.index("void mu_redo_frame_begin(void)"):shim.index("/* After a frame is drawn")]
+        self.assertLess(begin.index("ok = redo_command(3);"), begin.index("redo_armed = 1;"))
+        self.assertLess(begin.index("redo_armed = 1;"), begin.index("mu_online_audio_frame_begin();   /* this body adopts"))
+
+    def test_spectator_recording_does_not_switch_it_off(self):
+        app = source("port/app/source_host.cpp")
+        self.assertIn('if (!std::getenv("MELEE_SOURCE_RECORD") && !host::tick_redo_enabled() &&', app)
+
     def test_held_frames_are_reported(self):
         self.assertIn("host::note_frame_handover();", source("port/runtime/gx/gx_core.cpp"))
 

@@ -321,6 +321,9 @@ bool tick_redo_wanted();          // the game's gate between ticks
 void tick_redo_begin();           // the tick is being run again: host polls stand still meanwhile
 bool tick_redo_active();
 bool tick_redo_presleep();        // before a retrace: false when the wait ended early for a re-run
+// Online late controller read (hle/slippi_online.cpp): the game thread waits here until `seconds` after
+// this tick's place on the 60 Hz schedule (counted as waiting, not as work). Returns the time waited.
+double tick_hold(double seconds);
 // What a pad poll would return now differs from the last poll (window.cpp). Also places the test press
 // MELEE_TEST_MIDTICK_PRESS=<every n ticks>:<ms into the tick> (X on port 1, held 6 ticks), with a
 // latency probe line for it, whether or not the re-run is on.

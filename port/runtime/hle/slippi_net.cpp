@@ -735,6 +735,7 @@ void NetplayClient::OnData(Packet& packet, ENetPeer* peer) {
         std::lock_guard<std::mutex> lk(timing_mutex_);
         FrameTiming timing = last_frame_timing_[pidx];
         if (!has_game_started_) { timing.frame = 0; timing.time_us = cur_time; }
+        if (frame > remote_arrival_[pidx].frame) remote_arrival_[pidx] = {frame, cur_time};
         int64_t opponent_send_time_us = (int64_t)cur_time - (int64_t)(ping_us_[pidx] / 2);
         int64_t frame_diff_offset_us = 16683 * ((int64_t)timing.frame - frame);
         int64_t time_offset_us = opponent_send_time_us - (int64_t)timing.time_us + frame_diff_offset_us;
@@ -1835,6 +1836,10 @@ void NetplayClient::ThreadFunc() {
     if (status_.load(std::memory_order_acquire) == ConnectStatus::CONNECTED && time_ms() >= next_ping_ms) {
       next_ping_ms = time_ms() + 100;
       SendPrematchPing();
+      uint32_t rtt = 0;
+      for (int i = 0; i < remote_player_count_ && i < (int)server_.size(); ++i)
+        if (server_[i]) rtt = std::max<uint32_t>(rtt, std::max<uint32_t>(1, server_[i]->roundTripTime));
+      connection_ping_ms_.store(rtt, std::memory_order_relaxed);
     }
     // Everyone can be halted waiting on a dropped player, when no packet arrives to wake this thread.
     const bool waiting_on_drop = ProcessPlayerDrops();
@@ -1977,6 +1982,7 @@ void NetplayClient::StartSlippiGame() {
     std::lock_guard<std::mutex> lk(timing_mutex_);
     has_game_started_ = false;
     for (int i = 0; i < remote_player_count_; ++i) last_frame_timing_[i] = {0, time_us()};
+    for (auto& a : remote_arrival_) a = {};
   }
   {
     std::lock_guard<std::mutex> lk(ack_mutex_);
@@ -2349,6 +2355,22 @@ double NetplayClient::GetAndResetAvgPingMs() {
   uint64_t sum = ping_sample_sum_us_.exchange(0, std::memory_order_relaxed);
   uint64_t count = ping_sample_count_.exchange(0, std::memory_order_relaxed);
   return count ? (double)sum / (double)count / 1000.0 : 0.0;
+}
+bool NetplayClient::RemotePadEarlyMs(int32_t frame, double* early_ms) {
+  const uint64_t now = time_us();
+  bool any = false;
+  double least = 0.0;
+  std::lock_guard<std::mutex> lk(timing_mutex_);
+  for (int i = 0; i < remote_player_count_; ++i) {
+    if (!player_active_[match_info_.remote[i].player_idx].load(std::memory_order_acquire)) continue;
+    const FrameTiming a = remote_arrival_[i];
+    if (a.frame <= 0) return false;
+    const double early = (double)((int64_t)now - (int64_t)a.time_us) / 1000.0 + ((double)a.frame - (double)frame) * 16.683;
+    if (!any || early < least) least = early;
+    any = true;
+  }
+  if (any) *early_ms = least;
+  return any;
 }
 int32_t NetplayClient::CalcTimeOffsetUs() {
   std::vector<int> offsets;

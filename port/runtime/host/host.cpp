@@ -3579,6 +3579,18 @@ bool tick_redo_presleep() {
   return wait_for_tick_watching(deadline);
 }
 
+double tick_hold(double seconds) {
+  if (options.fast || seconds <= 0.0) return 0.0;
+  const auto deadline = g_next_frame + std::chrono::microseconds((long long)(seconds * 1e6));
+  const auto before = std::chrono::steady_clock::now();
+  if (deadline <= before) return 0.0;
+  perf::Scope wait_cost(perf::Stage::Wait);
+  wait_for_tick(deadline);
+  const double waited = std::chrono::duration<double>(std::chrono::steady_clock::now() - before).count();
+  sim_cost_add(SIM_WAIT, waited);
+  return waited;
+}
+
 // How deep the game thread's stack has been: the lowest page Windows has had to commit for it. The
 // game's model loaders call themselves once per joint and per drawn part, each such call is a host
 // call here, and a retrace interrupt that arrives mid-load runs on top of them. With the default
