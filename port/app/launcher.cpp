@@ -2557,6 +2557,13 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         if (i == 1) { open_settings(); return 0; }
         if (i == 4) { select_tab(3); refresh_replays(); return 0; }
         if (i == 5) { mod_manager::open(); return 0; }
+        if (i == 3 && !launcher::lobby::kPageShown) {
+          // The page is set aside (launcher_lobby.h): the button offers YouGame, the app when it is
+          // installed, otherwise the site's page for getting it.
+          if (MessageBoxW(g_main, L"Open YouGame?", L"Multiplayer Lobby", MB_YESNO | MB_ICONQUESTION) == IDYES)
+            ShellExecuteW(nullptr, L"open", widen(launcher::yougame::open_target()).c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+          return 0;
+        }
         if (i == 3) {
           refresh_account_line();
           select_tab(2);
