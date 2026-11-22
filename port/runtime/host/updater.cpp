@@ -31,6 +31,10 @@
 #define STBI_NO_STDIO
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb/stb_image.h"
+// Not in the Linux build's Windows stand-in headers (the Windows half of this file is compiled there too).
+#ifndef CREATE_BREAKAWAY_FROM_JOB
+#define CREATE_BREAKAWAY_FROM_JOB 0x01000000
+#endif
 
 #pragma comment(lib, "winhttp.lib")
 #pragma comment(lib, "bcrypt.lib")
