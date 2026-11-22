@@ -3363,6 +3363,13 @@ void start_channel(bool automated) {
     if (host::test_env::getenv("MELEE_NO_YOUGAME_CHANNEL")) { g_channel_allowed = false; return; }
     if (automated && !host::test_env::getenv("MELEE_TEST_YOUGAME_CHANNEL")) { g_channel_allowed = false; return; }
     start_channel_probe(true);
+    // Hidden test runs only: MELEE_TEST_YG_MENU_KEY_MS=N presses Shift+Tab N ms from now (a hidden window gets no keys).
+    if (const char* ms = host::test_env::getenv("MELEE_TEST_YG_MENU_KEY_MS"))
+      std::thread([wait = std::atoi(ms)] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(wait));
+        const bool taken = channel_menu_key("keys");
+        host::log("yougame: test Shift+Tab: %s, channel %s", taken ? "taken" : "left to the game", g_channel_up.load() ? "up" : "down");
+      }).detach();
     // A YouGame app started after the game (Get YouGame in the start window, or opened by hand) is found
     // without a restart: look again every 4 s while no channel is up. A look is a loopback connect that
     // fails at once when nothing listens; start_channel_probe refuses overlap and keeps its 5 s gate.
