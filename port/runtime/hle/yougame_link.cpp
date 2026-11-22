@@ -332,7 +332,12 @@ void restore_bridge_for_restart() {
   _putenv_s("YOUGAME_TOKEN", g_bridge_token.c_str());
   _putenv_s(g_hybrid_env ? "MELEE_YOUGAME_MATCH_BRIDGE" : "MELEE_YOUGAME_LAUNCHER", "1");
 }
+std::atomic<bool> g_app_same_player{false};   // hybrid: the app's channel names the launcher's own player (identity())
 bool routed_to_bridge(const json& body) {
+  if (g_match_bridge && body.is_object() &&
+      channel::invite_to_app(body.value("type", std::string()), body.count("room") && body["room"].is_string(),
+                             body.value("hold", json()) == true, g_channel_up.load(), g_app_same_player.load()))
+    return false;
   return g_match_bridge && channel::to_launcher_bridge(body.is_object() ? body.value("type", std::string()) : std::string(),
                                                        g_channel_up.load(), g_app_sign_in.load());
 }
@@ -2203,6 +2208,8 @@ Identity fetch_identity(const std::function<bool()>& cancelled = nullptr) {
       // else the app's, over its channel.
       std::string app_player;
       { std::lock_guard<std::mutex> lock(g_app_player_mutex); app_player = g_app_player_id; }
+      g_app_same_player = !g_app_sign_in.load() && g_channel_up.load() && !app_player.empty() && app_player == id.player_id;
+      if (g_app_same_player.load()) host::log("yougame: invites and the room report go to the YouGame app (the same player is signed in there)");
       host::log("yougame: matches go through %s with %s; the YouGame app's channel is %s%s",
                 g_app_sign_in.load() ? "the YouGame app's channel" : "the launcher's bridge", sign_in_used.c_str(),
                 g_channel_up.load() ? "up" : "not up",
