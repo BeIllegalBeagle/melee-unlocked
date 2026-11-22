@@ -189,21 +189,22 @@ class ThreadedBackend final : public Backend {
     // MELEE_ARRIVAL_PHASE_MS (tests): how far from the frame's own moment a frame may be and still be shown as drawn.
     static const double kArrivalPhase = [] { const char* v = std::getenv("MELEE_ARRIVAL_PHASE_MS"); return (v && *v ? std::atof(v) : 1.5) / 1000.0 / SIM_PERIOD; }();
     bool pair_pending = false;   // frames[cur] is not paired with its previous frame yet
-    // With a frame cap (present on arrival, variable refresh) a frame shown as drawn is released the
-    // instant it is ready. The game takes 0.5 to 1 ms longer on some ticks than others, so the frame
-    // reaches the screen that much earlier or later after the moment it shows. Holding it to a fixed
-    // point after its tick's start trades delay for evenness, measured 11-21 at a cap of 189 (hidden,
-    // two quiet rounds; ms, then steps over 1 ms and over 2 ms per 1000 frames): at once 3.98 | 61 | 0.5,
-    // held to the usual ready time 4.69 | 31 | 0.8, held to the late edge 4.76 | 25 | 1.0, every frame
-    // re-posed instead (MELEE_ARRIVAL_PHASE_MS=0) 5.02 | 3 | 0.4, the grid 5.17 | 16 | 1.1. At once is the
-    // default: its small steps match what the grid had before the levelling (32 to 56), with fewer
-    // large ones. MELEE_ARRIVAL_HOLD (tests): "usual" or "late" hold the frame.
-    static const int arrival_hold = [] { const char* v = std::getenv("MELEE_ARRIVAL_HOLD"); return v && *v == 'u' ? 1 : v && *v == 'l' ? 2 : 0; }();
+    // With a frame cap (present on arrival, variable refresh) a frame shown as drawn is released at the
+    // usual point after its tick's start at which such a frame is ready, not the instant it is: the game
+    // takes 0.5 to 1 ms longer on some ticks than others, and released at once the frame reached the
+    // screen that much earlier or later after the moment it shows. One that is ready later goes out at
+    // once. Measured 11-21 at a cap of 189 (hidden, quiet rounds; ms, then steps over 1 ms and over 2 ms
+    // per 1000 frames): held to the usual point 4.58-4.69 | 31-37 | 0.8-1.3, released at once
+    // 3.98-4.10 | 51-67 | 0.5-0.9, held to the late edge 4.76-4.81 | 25-47 | 1.0-1.2, every frame re-posed
+    // (MELEE_ARRIVAL_PHASE_MS=0) 5.02-5.10 | 3-4 | 0.4-0.6, the grid with levelling 5.12-5.33 | 14-16 | 1.0-1.6,
+    // the grid as released before (no levelling) 5.23-5.77 | 32-56 | 3.3-10.4. The usual point is the
+    // default: less delay AND fewer steps than what was released. MELEE_ARRIVAL_HOLD (tests): 0 at once, "late".
+    static const int arrival_hold = [] { const char* v = std::getenv("MELEE_ARRIVAL_HOLD"); return v && *v == '0' ? 0 : v && *v == 'l' ? 2 : 1; }();
     double arrival_ready_late = 0.0;   // tick start to "recorded and ready", late edge
     uint64_t arrival_exacts = 0;
     // The frame queue's condition variable wakes this thread 0.2 ms after a push on a quiet PC and
     // 1 ms or more on a busy one. With sub-frames off (60 locked) that is added to every frame, so
-    // from 1.5 ms before the next frame is expected this thread watches the push counter instead of
+    // from 0.5 ms before the next frame is expected (a short window: it is a busy wait, about 5% of one core at most) this thread watches the push counter instead of
     // sleeping. Not on a PC with fewer than 8 logical processors, where the simulation needs the core.
     // MELEE_HANDOVER_SPIN=0 (tests): always sleep.
     static const bool handover_spin = [] { const char* v = std::getenv("MELEE_HANDOVER_SPIN");
@@ -217,6 +218,12 @@ class ThreadedBackend final : public Backend {
     // MELEE_KIND_LEVEL=0 (tests): off.
     static const bool kind_level = [] { const char* v = std::getenv("MELEE_KIND_LEVEL"); return !(v && *v == '0'); }();
     double kind_lag[2] = {0.0, 0.0}, repeat_shift = 0.0; uint64_t kind_serial = 0, kind_samples[2] = {0, 0};
+    // A frame shown as drawn lands earlier or later than usual after its moment, by how much sooner or
+    // later the game finished that tick (0.5 to 1 ms). Its repeats start out the same amount off and ease
+    // back to the usual over one game frame, so the step is taken once (into the new frame) and in small
+    // parts on the way out, instead of once in and once out. MELEE_TICK_EASE=0 (tests): off.
+    static const bool tick_ease = [] { const char* v = std::getenv("MELEE_TICK_EASE"); return !(v && *v == '0'); }();
+    double drawn_ready_usual = 0.0, tick_off = 0.0, tick_off_at = 0.0;
     // The frame a new one replaces is handed back to the queue after the new frame's present, not
     // before: emptying it (a few hundred draws with their poses) took 0.2 ms the new frame waited for.
     Frame retired; bool retired_pending = false;
@@ -534,10 +541,10 @@ class ThreadedBackend final : public Backend {
           const double now = host::now_seconds();
           if (flash_on) {
             std::this_thread::yield();   // tests: the report's change is picked up within microseconds
-          } else if (due > 0.0 && now >= due - 0.0015 && now < due + 0.0015) {
-            while (queue.pushed() == popped_total && host::now_seconds() < due + 0.0015) YieldProcessor();
+          } else if (due > 0.0 && now >= due - 0.0005 && now < due + 0.0010) {
+            while (queue.pushed() == popped_total && host::now_seconds() < due + 0.0010) YieldProcessor();
           } else {
-            const double until_spin = due > 0.0 && now < due ? due - 0.0015 - now : 0.002;
+            const double until_spin = due > 0.0 && now < due ? due - 0.0005 - now : 0.002;
             queue.wait_available(std::chrono::microseconds((long long)(std::min(std::max(until_spin, 0.0002), 0.002) * 1e6)));
           }
           continue;
@@ -611,11 +618,19 @@ class ThreadedBackend final : public Backend {
         if (shown_lead && !live_options.vsync && !scanline_active && !handover_now && options_.pin_phase < 0 && lag_slow > 0.0)
           lead = std::min(std::max((lag_fast - lag_slow) + (solve_fast - solve_slow), -0.004), 0.004);
         t = phase_for(now + lead);
-        if (kind_level && current.sequence == rendered_sequence && options_.pin_phase < 0 && !scanline_active)
-          t = std::min(std::max(t - repeat_shift / SIM_PERIOD, 0.0), 1.0);
+        if (kind_level && current.sequence == rendered_sequence && options_.pin_phase < 0 && !scanline_active) {
+          const double ease = tick_ease && tick_off != 0.0 ? tick_off * std::max(0.0, 1.0 - (now - tick_off_at) / SIM_PERIOD) : 0.0;
+          t = std::min(std::max(t - (repeat_shift + ease) / SIM_PERIOD, 0.0), 1.0);
+        }
         shown_moment = base + t * SIM_PERIOD;
+        if (current.sequence != rendered_sequence) tick_off = 0.0;   // a re-posed first present shows its own moment
         if (pair_pending && current.sequence != rendered_sequence && !interpolate && t <= kArrivalPhase) {
           arrival_exact = true; t = 0.0; shown_moment = base;
+          // From the frame's moment to when it will be recorded, against the usual.
+          const double ready = now + (submit_first_typical > 0.0 ? submit_first_typical : submit_typical) - base;
+          drawn_ready_usual = drawn_ready_usual != 0.0 ? drawn_ready_usual + 0.05 * (ready - drawn_ready_usual) : ready;
+          tick_off = std::min(std::max(ready - drawn_ready_usual, -0.002), 0.002);
+          tick_off_at = now;
         }
         if (options_.pin_phase >= 0) {
           // Development: one presented frame per simulation frame at a fixed phase, so two runs of

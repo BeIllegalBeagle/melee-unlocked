@@ -47,8 +47,8 @@ class ArrivalPresentWiringTest(unittest.TestCase):
         # On unless switched off, and only ever used on a display found to follow the frames.
         self.assertIn("static const bool handover_env = [] { const char* v = std::getenv(\"MELEE_PRESENT_ON_HANDOVER\"); return !(v && *v == '0'); }();", backend)
         self.assertIn("handover_now = handover_present && vrr == 1 && !reflex_pacing && cap_period > 0 && current.sequence != rendered_sequence;", backend)
-        # A frame shown as drawn is released at once by default; holding it is a test switch.
-        self.assertIn("return v && *v == 'u' ? 1 : v && *v == 'l' ? 2 : 0; }();", backend)
+        # A frame shown as drawn is held to the usual ready point by default; at once and the late edge are test switches.
+        self.assertIn("return v && *v == '0' ? 0 : v && *v == 'l' ? 2 : 1; }();", backend)
         self.assertIn("static const bool kind_level = [] { const char* v = std::getenv(\"MELEE_KIND_LEVEL\"); return !(v && *v == '0'); }();", backend)
         self.assertIn("repeat_shift = std::min(std::max(repeat_shift + 0.02 * (kind_lag[0] - kind_lag[1]), -0.003), 0.003);", backend)
         d3d12 = source("port/runtime/gx/gx_d3d12.cpp")
