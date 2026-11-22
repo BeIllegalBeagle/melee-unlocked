@@ -2237,6 +2237,19 @@ Identity fetch_identity(const std::function<bool()>& cancelled = nullptr) {
       }
       break;
     }
+    // Hybrid, the launcher's sign-in: the app's player id can be the game's own id for that player, not the site's,
+    // so two ids that differ do not prove two accounts. The connect code is the account's: ask the app's and compare.
+    if (g_match_bridge && !g_app_sign_in.load() && g_channel_up.load() && !g_app_same_player.load() && !id.code.empty()) {
+      try {
+        const json a = bridge_channel({{"type", "mpCode"}}, 4000, cancelled);
+        const json r = a.is_object() && a.count("result") && a["result"].is_object() ? a["result"] : a;
+        const std::string app_code = r.is_object() ? r.value("code", std::string()) : std::string();
+        g_app_same_player = !app_code.empty() && app_code == id.code;
+        host::log("yougame: the YouGame app's connect code %s the launcher's%s", app_code.empty() ? "was not given, so it is not known to be"
+                  : g_app_same_player.load() ? "is" : "is not",
+                  g_app_same_player.load() ? ": invites and the room report go to the YouGame app" : "");
+      } catch (const std::exception&) {}
+    }
     id.ok = !id.player_id.empty();
     if (!id.ok) id.error = "Sign in to YouGame to play online";
     // Until the player shares their name with this game the SDK calls them "Player"; the tag of
