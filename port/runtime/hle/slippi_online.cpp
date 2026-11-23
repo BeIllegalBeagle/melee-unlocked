@@ -3643,19 +3643,28 @@ bool handle_command(uint8_t cmd, const uint8_t* payload, uint32_t payload_len, s
     case CMD_GET_DELAY: q.clear(); q.push_back(session_mode() >= 0 ? 1 : 0);
       q.push_back(session_mode() >= 0 ? (uint8_t)effective_delay() : 0); return true;
     // This machine's Pro AI seat in the match it plays (shim/mu_online.c drives its partner pad from the
-    // model): active, the seat's port, its pro. Asked once per match.
+    // model): active, the seat's port, its pro. Asked once per match. A room's Pro AI seat says so in the
+    // setup; the YouGame Friends Doubles home's Pro AI partner is the Player 2 seat Rooms gave this machine
+    // (id local:<connection>:1), named by the shim (payload: the pro, 0xFF none). Rooms never knows it is a
+    // model: the seat goes out as any Player 2's pad, so nothing else changes on any machine.
     case CMD_PROAI_SEAT: {
       q.assign(3, 0);
+      const uint8_t friends_pro = payload_len >= 1 ? payload[0] : 0xFF;
       const auto lobby = yougame::friends_lobby();
       const auto* p = lobby.open && lobby.plan && lobby.plan->ok ? lobby.plan.get() : nullptr;
-      if (p && p->second_local_port >= 0 && p->second_local_port < p->ports && p->port[p->second_local_port].pro >= 0 &&
-          session_mode() >= 0) {
-        q[0] = 1;
-        q[1] = (uint8_t)p->second_local_port;
-        q[2] = (uint8_t)p->port[p->second_local_port].pro;
+      const int second = p ? p->second_local_port : -1;
+      const bool in_setup = p && second >= 0 && second < p->ports;
+      const char* how = "none here";
+      if (in_setup && session_mode() >= 0 && p->port[second].pro >= 0) {
+        q[0] = 1; q[1] = (uint8_t)second; q[2] = (uint8_t)p->port[second].pro;
+        how = "the room's Pro AI seat";
+      } else if (in_setup && session_mode() >= 0 && friends_pro < 0x80 && p->port[second].local_index == 1 &&
+                 p->port[second].id.rfind("local:", 0) == 0) {
+        q[0] = 1; q[1] = (uint8_t)second; q[2] = friends_pro;
+        how = "the Friends partner, Player 2's seat";
       }
-      host::log("slippi: Pro AI seat asked: setup %d, second local port %d, session %d -> %s", p ? 1 : 0,
-                p ? p->second_local_port : -1, session_mode(), q[0] ? "this machine plays it" : "none here");
+      host::log("slippi: Pro AI seat asked: setup %d, second local port %d, session %d, partner pro %d -> %s",
+                p ? 1 : 0, second, session_mode(), friends_pro == 0xFF ? -1 : (int)friends_pro, how);
       return true;
     }
     // Ranks: YouGame mode answers with its ladder rank; standalone never shows one (visibility 0

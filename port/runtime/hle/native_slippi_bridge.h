@@ -106,8 +106,10 @@ inline bool command_payload_valid(uint8_t cmd, const uint8_t* payload, uint32_t 
     case CMD_GET_MATCH_STATE: case CMD_OPEN_LOGIN: case CMD_LOGOUT: case CMD_UPDATE:
     case CMD_GET_ONLINE_STATUS: case CMD_CLEANUP_CONNECTION: case CMD_GET_NEW_SEED:
     case CMD_GET_PLAYER_SETTINGS: case CMD_GET_DELAY: case CMD_GET_RANK:
-    case CMD_FETCH_RANK: case CMD_GET_RANK_VISIBILITY: case CMD_PROAI_SEAT:
+    case CMD_FETCH_RANK: case CMD_GET_RANK_VISIBILITY:
     expected = 0; break;
+    // The match's Pro AI query: one byte, the Friends Doubles partner's pro (0xFF none); none from older shims.
+    case CMD_PROAI_SEAT: return payload_len == 0 || (payload_len == 1 && payload);
     // 0xFA is two commands: the online menu's Ranked query (no payload) and the replay viewer's gate
     // (shim/mu_replay.c CMD_REPLAY_GATE: the next frame, then 0 ask or 1 restore). Refusing the gate's
     // five bytes left every replay control dead: pause, jumps, fast forward and take over (1.0 report).

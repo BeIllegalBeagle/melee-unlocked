@@ -33,6 +33,19 @@ One room setting, **Match: Singles | Doubles | Free-for-all**, in the Arena pane
 - A Pro AI sits in and out with its owner, never plays Singles (one PC), never votes or hosts, leaves with
   its owner. One per person. Older builds in the room: Pro AIs (and free-for-all) are off.
 
+### YouGame Friends: Pro AI partner (Doubles home)
+- The partner door's tab: Find, Invite, **Pro AI**, P2, CPU. On Pro AI each A goes to the next pro (Fox (Cody),
+  Falco (Mang0), Marth (Zain), Yoshi (aMSa)), then on to P2. The door's tag reads PRO, the panel
+  "Partner: Fox (Cody)", and the coin goes down on the pro's fighter by itself.
+- It is Player 2's local seat (the same LOCAL_SEAT claim P2 sends): Rooms sees a couch partner, nothing new on
+  Crunch's side. In the match the shim asks `CMD_PROAI_SEAT` with the pro (1 byte, 0xFF none); the host answers
+  with the setup's second local port when its id is `local:<connection>:1`; the model plays it as the partner pad.
+- Code: `sourceport/game/include/mu_friends4_css.inc` (`mu_f4_want_next`, `mu_f4_proai_door`, `mu_f4_proai_lift`),
+  `shim/mu_slippi_menu.c` (`mu_lobby_pros`, pad router), `shim/mu_online.c` (`proai_seat_ask`),
+  `hle/slippi_online.cpp` (CMD_PROAI_SEAT), `hle/native_slippi_bridge.h` (0 or 1 byte).
+- Not proven against Rooms (no YouGame accounts on this PC). Tests: `doubles_lobby_select_test.py`,
+  `friends4_css_wiring_test.py`.
+
 ## How it works
 
 - Rules: `port/runtime/hle/arena_rules.{h,cpp}`: `Ring` kind; `Member::bot_of/pro`, `add_bot`,
@@ -69,9 +82,9 @@ One room setting, **Match: Singles | Doubles | Free-for-all**, in the Arena pane
 ## Not proven / not built
 
 - YouGame: Arena FFA and Pro AI under YouGame need signed-in production accounts (none on this PC).
-- YouGame **Friends** Pro AI seats are not built: a Doubles partner Pro AI can be done client-side (the
-  partner door's local seat driven by the model); Pro AIs in Friends FFA or on the other team need Crunch's
-  room server to accept local seats outside Doubles.
+- YouGame **Friends**: the Doubles partner Pro AI is built (above) but untested against Rooms. Pro AIs in the
+  4-player Friends lobby (FFA, or on the other team) need Crunch's room server to accept local seats outside
+  Doubles.
 - Two Pro AIs on one PC (needs a second partner pad on the wire).
 - Real players over the internet (only the two accounts on this PC, same LAN).
 

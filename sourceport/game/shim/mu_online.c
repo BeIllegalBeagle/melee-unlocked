@@ -532,8 +532,12 @@ static u8 proai_reply[RESPONSE_CAPACITY];
 static void proai_seat_ask(void)
 {
     unsigned int got = 0;
+    /* The Friends Doubles home's partner tab on Pro AI: the room seated Player 2 on this machine, and the
+     * model plays that seat (the host answers with its port). 0xFF: no Pro AI partner here. */
+    const int model = mu_lobby_partner_pro_model();
+    const u8 friends_pro = model >= 0 && model < 0x80 ? (u8) model : 0xFF;
     proai_port = -1;
-    if (command_into(CMD_PROAI_SEAT, NULL, 0, proai_reply, sizeof proai_reply, &got) == 0 && got >= 3 &&
+    if (command_into(CMD_PROAI_SEAT, &friends_pro, 1, proai_reply, sizeof proai_reply, &got) == 0 && got >= 3 &&
         proai_reply[0] == 1 && proai_reply[1] < 4)
     {
         proai_port = proai_reply[1];
