@@ -581,11 +581,12 @@ int main(int argc, char** argv) {
     std::printf("%s: %s\n", ok ? "textures only" : "more than textures", detail.c_str());
     return ok ? 0 : 1;
   }
-  if (argc == 5 && std::string(argv[1]) == "--stage") {
+  if ((argc == 5 || argc == 6) && std::string(argv[1]) == "--stage") {   // a sixth argument: write the online form there
     const auto load = [](const char* path) { std::ifstream f(path, std::ios::binary); std::vector<uint8_t> v((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>()); return v; };
     std::vector<uint8_t> online; std::string detail;
     const bool ok = host::cosmetics::stage_online_form(load(argv[2]), load(argv[3]), &online, &detail, argv[4]);
     std::printf("%s (%zu bytes online): %s\n", ok ? "online" : "offline", online.size(), detail.c_str());
+    if (ok && argc == 6 && !online.empty()) { std::ofstream(argv[5], std::ios::binary).write((const char*)online.data(), (std::streamsize)online.size()); }
     return ok ? 0 : 1;
   }
   test_fighter_sound_overlay();
