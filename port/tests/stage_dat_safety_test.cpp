@@ -144,7 +144,7 @@ int main(int argc,char** argv) {
     auto moved_root=skin; put(moved_root,32+128+48,0x3F800000u);   // the root itself moved: not whole
     check(graft_visuals(clean,moved_root,&out,&note,{},{0}) && note.find("drawn whole")==std::string::npos,"a moved root is not taken whole");
     check(word(out.data()+32+320+48)==0x42080000u,"then the child keeps the original's place");
-    auto new_motion=skin; pointer(new_motion,80+4,224);   // an animation slot the original lacks: not whole
+    auto new_motion=skin; put(new_motion,32+80+48,1);   // a model entry value that differs: not whole
     check(graft_visuals(clean,new_motion,&out,&note,{},{0}) && note.find("drawn whole")==std::string::npos,"other animations are not taken whole");
   }
   {
