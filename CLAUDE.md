@@ -18,17 +18,37 @@ game, kept on the `mac-build` branch. Everything else follows upstream.
 ## Building the Mac app
 
 ```sh
-port/mac/build_deps.sh                    # once: fills ../deps beside the repo
-port/mac/build_all.sh path/to/melee.iso   # about 3 minutes clean; later runs rebuild only what changed
-./play-mac.command                        # runs build-mac-full-squad/MeleeUnlocked.app
+port/mac/build_deps.sh                                 # once: fills ../deps beside the repo
+port/mac/build_all.sh --arch arm64 path/to/melee.iso   # native Apple silicon app (build-mac-full-arm64-squad/)
+port/mac/build_all.sh path/to/melee.iso                # x86-64 app under Rosetta (build-mac-full-squad/)
+./play-mac.command                                     # the native app when it exists
 ```
+
+Each build takes a few minutes clean; later runs rebuild only what changed.
 
 `port/mac/README.md` ("Building from a clone") documents the steps. Things that are not obvious:
 
-- The host is x86-64 and runs under Rosetta. It loads the game as a Linux ELF (`melee_game.so`) through
-  `port/mac/elf_loader.cpp`. The game is built with a GCC cross compiler that targets Linux
-  (`port/mac/linux-x86_64-cross.cmake`), with `-fno-stack-protector`, because the loader refuses
-  stack-canary code.
+- The host loads the game as a Linux ELF (`melee_game.so`) through `port/mac/elf_loader.cpp`, for both
+  the native arm64 host and the x86-64 one under Rosetta. The game is built with a GCC cross compiler
+  that targets Linux (`port/mac/linux-cross.cmake`; GCC is needed for `scalar_storage_order`), with
+  `-fno-stack-protector`, because the loader refuses stack-canary code. Rosetta's general support ends
+  after macOS 27, so the arm64 build is the one to keep working.
+- Native arm64 keeps the low 4 GB unmapped, so the console window (0x7f000000..0x84000000: MEM1, then
+  the game image at 0x82800000) sits at a 4 GB-aligned base there. The game keeps the low 32 bits of
+  its addresses, identical to x86-64, and widens them with `MU_WIDEN`/`MU_Z`/`DP`
+  (`sourceport/game/include/mu_window.h`). New game code that turns a 32-bit word into a pointer must
+  go through one of these, never a plain `(T*)(uintptr_t)` cast. A missed one faults at a console
+  address below 4 GB (for example `address 0x8017e000`); run the app under
+  `lldb -b -o run -k "bt 24" -- <app> ...` and map game frames with the cross addr2line on
+  `melee_game.dbg` (subtract the base, logged as `Mac layout: owned window`). Narrow int-to-pointer casts
+  show up as `-Wint-to-pointer-cast` when the game is compiled without `-w`.
+- Decomp changes for the Mac live in `sourceport/patches/melee-native-mac.patch`, applied after the
+  released `melee-native.patch` by `tools/prepare_native_sources.py`. Leave upstream's patch untouched.
+- On x86-64 these changes must compile to the same code (`MU_WIDEN` is the old zero-extension there).
+  Compare the x86-64 library's functions against a reference build after changing game code.
+- AArch64 GCC aligns static data to 8 where x86-64 GCC uses 32 for anything of 32 bytes or more, and the
+  game's DMA buffers depend on it. `port/mac/align_like_x86.py` (the AArch64 build's compiler launcher)
+  restores that.
 - The loader only accepts imports listed in its `IMPORT(...)` table. A new upstream game that fails with
   "unlisted strong import" needs that import added there.
 - The game library is built with Doubles and Squad Strike on, as in the Linux release, so the host must
@@ -51,3 +71,9 @@ port/mac/build_all.sh path/to/melee.iso   # about 3 minutes clean; later runs re
   --volume 0 --user-dir <tmp>` must exit 0 and log `canary sites 0`.
 - `--hidden`, `--headless` and `MELEE_NO_GC_ADAPTER=1` runs never open the adapter, so test the adapter
   by playing. Its log lines start with `gc adapter:` in `~/.local/share/melee-unlocked/User/Slippi/melee_port.log`.
+- Determinism between the two architectures: run both apps with `--headless --fast --vanilla-game
+  --vanilla-only --frames 9000 --time-base 0 --rng-seed 0x12345678 --script port/scripts/parity_vs.txt
+  --state-digest <csv>` and compare with `compare_digest.compare` (port/mac/compare_digest.py). Match
+  frames must show 0 differing values. Menu frames are excluded; their RNG also differs run to run.
+- `port/mac/elf_loader_test.cpp` with `port/mac/elf_abi_probe.c` checks the loader, including the
+  printf-family bridge between the Linux and Apple AArch64 calling conventions.

@@ -4,21 +4,56 @@ Apple silicon or Intel, macOS 15 or later, Xcode's command line tools, cmake, gi
 and curl, plus a retail NTSC 1.02 disc:
 
 ```sh
-port/mac/build_deps.sh                  # once: fills ../deps beside the repository
-port/mac/build_all.sh path/to/melee.iso # decomp sources, game library, headers, host, app
-./play-mac.command                      # asks for the disc the first time
+port/mac/build_deps.sh                               # once: fills ../deps beside the repository
+port/mac/build_all.sh --arch arm64 path/to/melee.iso # native Apple silicon app
+port/mac/build_all.sh path/to/melee.iso              # x86-64 app, runs under Rosetta
+./play-mac.command                                   # native when built; asks for the disc once
 ```
 
-`build_deps.sh` builds SDL2, glslang and SPIRV-Cross (universal), static x86-64
-libusb, and downloads messense's GCC 15.2 cross compiler for x86-64 Linux
-(`linux-x86_64-cross.cmake`). `build_all.sh` prepares `sourceport/extern/melee`,
-builds `melee_game.so` with that compiler and `-fno-stack-protector` (the loader
+`build_deps.sh` builds SDL2, glslang, SPIRV-Cross and static libusb (all universal)
+and downloads messense's GCC 15.2 cross compilers for x86-64 and AArch64 Linux
+(`linux-cross.cmake`). `build_all.sh` prepares `sourceport/extern/melee` (the
+released `melee-native.patch`, then `melee-native-mac.patch`), builds
+`melee_game.so` with the matching compiler and `-fno-stack-protector` (the loader
 refuses stack-canary code) and with Doubles and Squad Strike on as in the Linux
 release, recompiles the headers from the disc, then runs
-`build_full.py --squad-strike --doubles`. The app is
-`build-mac-full-squad/MeleeUnlocked.app`; later runs rebuild only what
-changed. The official Linux game is built with GCC 14, so online play against
-other platforms is not yet verified to stay in sync.
+`build_full.py --arch <arch> --squad-strike --doubles`. The apps are
+`build-mac-full-arm64-squad/MeleeUnlocked.app` and
+`build-mac-full-squad/MeleeUnlocked.app`; later runs rebuild only what changed.
+The official Linux game is built with GCC 14 and these with GCC 15.2, so online
+play against other platforms is not yet verified to stay in sync.
+
+### The native Apple silicon build
+
+The game stays a Linux ELF that `elf_loader.cpp` maps itself, now also for
+AArch64, so both Mac builds share the x86-64 build's memory layout. The game keeps
+console addresses in 32-bit words (disc pointer slots, `MU_Z` words), all inside
+the window 0x7f000000..0x84000000 (MEM1, then the image at 0x82800000). A native
+arm64 process never maps its low 4 GB, so the loader places that window at the
+first free 4 GB-aligned base instead and the game widens each word against it
+(`sourceport/game/include/mu_window.h`): a word holds the same number on both
+architectures, and B is 0 on x86-64, whose code is unchanged.
+
+- AArch64 game flags: `-ffixed-x18` (Apple's platform register), `-fsigned-char`
+  (as x86-64), `-mno-outline-atomics` (no `getauxval`), and `-fdata-sections
+  -fno-section-anchors` for `align_like_x86.py`, which gives every static object
+  of 32 bytes or more the 32-byte alignment x86-64 GCC gives it (the game's DMA
+  buffers rely on that).
+- AArch64 Linux and Apple pass variadic arguments differently; the loader
+  bridges the game's printf-family imports (`elf_loader_test.cpp` with
+  `elf_abi_probe.c` checks it on both architectures), and the host takes the two
+  byte-sized API arguments as whole registers.
+- A word widened without the base points into the unmapped low 4 GB and stops
+  at once, with the faulting console address. A narrow int-to-pointer cast
+  shows up as `-Wint-to-pointer-cast` when the game is built without `-w`.
+- Under the Hardened Runtime (needed for notarization) the loader's mapped code
+  needs `com.apple.security.cs.allow-unsigned-executable-memory`; local builds
+  are not hardened.
+
+Checked 2026-11-23 on an M5 with macOS 27: the headless parity run
+(`parity_vs.txt`, `--fast --vanilla-game --vanilla-only`) gives identical state
+digests for the x86-64 and arm64 builds, 7,200 match frames x 76 fields, and
+the native game step takes about two thirds of the Rosetta one.
 
 The GameCube adapter (Wii U mode) is opened through libusb, as Slippi Dolphin
 does. Like Dolphin, it needs [GCAdapterDriver](https://github.com/secretkeysio/GCAdapterDriver)
