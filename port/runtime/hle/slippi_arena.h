@@ -80,6 +80,9 @@ bool room_just_ended();
 // True while a Slippi search or a connected pair is up (any thread): then Z belongs to the game
 // ("Z to cancel") unless this game is in a room.
 bool search_busy();
+// The room's next game is a free-for-all (any thread): the Teams character select hides its team
+// toggle and Start locks in a random stage (the shim's arena reply, cmd 0xDD bit 2).
+bool css_ffa();
 // The online character select's pick (the game shim, cmd 0xEE): Slippi's external character id, or
 // kNone while no character is picked, and the costume. Shown as this member's portrait in the room.
 void set_css_pick(uint8_t character, uint8_t costume);

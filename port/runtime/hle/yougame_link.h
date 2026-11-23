@@ -294,7 +294,8 @@ struct Search {
     std::string url, ticket, room, home;
   } doubles_match;
   // An arena game (slippi_arena.cpp under YouGame): the room players of this game, in ring order (ring slot n
-  // plays port n+1), found in the arena's own room (arena_room below) instead of a room of their own. 2 or 4.
+  // plays port n+1), found in the arena's own room (arena_room below) instead of a room of their own. 2 to 4
+  // (3 only in a free-for-all).
   std::vector<std::string> arena_fighters;
 };
 

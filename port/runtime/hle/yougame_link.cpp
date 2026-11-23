@@ -4813,13 +4813,14 @@ Match find_match(const Search& search, const std::function<bool()>& cancel_reque
               search.direct_code.empty() ? "none" : "set", search.friend_room.empty() ? "none" : "set");
     return fail(lobby::kSearchRefused);
   }
-  // An arena game: 2 or 4 different fighters, found in the arena's own room, never a code, invite or lobby.
+  // An arena game: 2 to 4 different fighters (3 only in a free-for-all), found in the arena's own room,
+  // never a code, invite or lobby.
   const bool arena = !search.arena_fighters.empty();
   if (arena) {
     const auto& f = search.arena_fighters;
     const bool distinct = std::set<std::string>(f.begin(), f.end()).size() == f.size() &&
                           std::none_of(f.begin(), f.end(), [](const std::string& id) { return id.empty(); });
-    if ((f.size() != 2 && f.size() != 4) || !distinct || search.friends_lobby || !search.friend_room.empty() ||
+    if (f.size() < 2 || f.size() > 4 || !distinct || search.friends_lobby || !search.friend_room.empty() ||
         !search.direct_code.empty() || search.mode == 0) {
       host::log("arena: search refused (%zu fighters, mode %d)", f.size(), (int)search.mode);
       return fail("The arena could not start this game");

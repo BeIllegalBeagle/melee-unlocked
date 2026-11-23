@@ -94,10 +94,30 @@ struct State {
   double pop_seen[2] = {-10, -10};          // when the hand was last near that side
   double last_time = 0;
   bool leave_armed = false;                 // Rules > Leave the room was pressed once
+  size_t hint_members = 0;                  // the room's size the "4 in the room" hint last saw
+  double hint_until = -1;                   // the hint shows until then
+  std::string match_note;                   // the Rules page's Match row: why a kind is not offered
+  double match_note_until = -1;
 } g;
 
 // What a lit-up button does.
 enum class Do : uint8_t { None, Rules, AddCode, Spot, Ask, Doubles, Opt0, Opt1, Opt2, Member, Leave, Warmup, Pip };
+// R's proposal: the other kind of ring the room can play now. From singles: doubles with four or more
+// in the room, else a free-for-all; from doubles: a free-for-all; from a free-for-all: doubles with four
+// or more, else singles. kRingKinds (none) when nothing else is offered.
+slippi::arena::Ring next_kind(const slippi::arena::Room& r) {
+  using slippi::arena::Ring;
+  const Ring order[3][3] = {{Ring::Doubles, Ring::Ffa, Ring::Singles}, {Ring::Ffa, Ring::Singles, Ring::Doubles}, {Ring::Doubles, Ring::Singles, Ring::Ffa}};
+  for (Ring k : order[(int)r.kind]) if (k != r.kind && slippi::arena::switch_offered(r, k)) return k;
+  return (Ring)slippi::arena::kRingKinds;
+}
+const char* switch_label(slippi::arena::Ring k) {
+  return k == slippi::arena::Ring::Singles ? "Back to singles" : k == slippi::arena::Ring::Doubles ? "Doubles" : "Free-for-all";
+}
+// The ring's kind before the mode, in the gold capitals ("DOUBLES  WINNER STAYS").
+std::string kind_caps(const slippi::arena::Room& r) {
+  return r.kind == slippi::arena::Ring::Doubles ? "DOUBLES  " : r.kind == slippi::arena::Ring::Ffa ? "FFA  " : "";
+}
 // The room's match window's size button (watching): its label says what A on it does.
 constexpr const char* kPipSmall = "Picture in picture";
 constexpr const char* kPipBig = "Full size";
@@ -710,10 +730,11 @@ std::string next_sentence(const View& v) {
     const auto voters = ar::switch_voters(r);
     int yes = 0;
     for (uint8_t id : voters) if (id < 16 && (r.switch_votes & (1u << id))) ++yes;
-    return std::string(r.doubles ? "Back to singles: " : "Doubles: ") + std::to_string(yes) + " of " +
+    return std::string(switch_label(r.switch_to)) + ": " + std::to_string(yes) + " of " +
            std::to_string(voters.size()) + " said yes.";
   }
   if (r.asker != ar::kNone && r.asker == v.self) return "You asked to play next.";
+  if (g.hint_until > ImGui::GetTime()) return "4 in the room: Doubles and Free-for-all available. Y to switch.";
   if (ar::role(r, v.self) != Role::InLine) return "";
   const size_t at = (size_t)(std::find(r.line.begin(), r.line.end(), v.self) - r.line.begin());
   if (at > 0) return "You are number " + std::to_string(at + 1) + " in line.";
@@ -737,7 +758,10 @@ float prompt_height(float w, const View& v, int kind, std::vector<std::string>* 
     question = (a ? a->name : std::string("Someone")) + " asks to play next. Give up your spot?";
     *options_out = {"Yes", "Yes, and I play the winner", "No"};
   } else {
-    question = r.doubles ? "Back to singles?" : "Switch the four of you to doubles?";
+    const int n = (int)ar::switch_voters(r).size();
+    question = r.switch_to == ar::Ring::Singles ? "Back to singles?"
+             : r.switch_to == ar::Ring::Doubles ? "Switch the four of you to doubles?"
+             : "Switch the " + std::to_string(n) + " of you to a free-for-all?";
     *options_out = {"Yes", "No"};
   }
   const Ink qk{Face::Bold, 12, kWhite};
@@ -796,14 +820,17 @@ void page_box(float x, float y, float w, const View& v) {
   const Ink head{Face::Title, 13, kWhite, true, 2};
   const Ink small{Face::Body, 10, kGold, false, 0, false, 1.5f};
   if (g.page == Page::Rules) {
-    const float h = px(178);
+    const float h = px(206);
     glow(x, y, x + w, y + h, px(6), IM_COL32(243, 194, 46, 90), px(10));
     steel(x, y, x + w, y + h, kGold);
     text(small, x + px(8), y + px(8), "ROOM");
     text(head, x + px(8), y + px(20), "RULES");
-    const std::string values[3] = {kModeWords[(int)v.room.mode], kLookNames[(int)g.look], g.tabs ? "Tabs" : "Shown"};
-    const char* labels[3] = {"Mode", "Look", "Panel"};
-    for (int i = 0; i < 3; ++i) {
+    // Match: the ring's kind, or the one being voted on; a note under it says why a kind is not offered.
+    const bool note = g.match_note_until > ImGui::GetTime() && !g.match_note.empty();
+    const std::string match = v.room.switch_pending ? std::string(ar::ring_name(v.room.switch_to)) + " (vote)" : ar::ring_name(v.room.kind);
+    const std::string values[4] = {kModeWords[(int)v.room.mode], match, kLookNames[(int)g.look], g.tabs ? "Tabs" : "Shown"};
+    const char* labels[4] = {"Mode", "Match", "Look", "Panel"};
+    for (int i = 0; i < 4; ++i) {
       const float yy = y + px(44) + i * px(28);
       if (g.row == i) {
         const int start = dl()->VtxBuffer.Size;
@@ -811,14 +838,14 @@ void page_box(float x, float y, float w, const View& v) {
         shade_x(start, x + px(6), x + w - px(6), kGold, IM_COL32(233, 168, 26, 255));
       }
       const Ink lk{Face::Body, 9.5f, g.row == i ? kInk : kDimText};
-      const Ink vk{Face::Bold, 12, g.row == i ? kInk : kWhite};
-      text(lk, x + px(12), yy, labels[i]);
-      text(vk, x + px(12), yy + px(10), std::string("< ") + values[i] + " >");
+      Ink vk{Face::Bold, 12, g.row == i ? kInk : kWhite};
+      text(lk, x + px(12), yy, i == 1 && note && g.row == 1 ? fit(lk, g.match_note, w - px(24)) : labels[i]);
+      text(vk, x + px(12), yy + px(10), fit_name(vk, std::string("< ") + values[i] + " >", w - px(24)));
     }
     {
       // The last row: leave the room (A). A host's room closes for everyone, and the row says so.
-      const float yy = y + px(44) + 3 * px(28);
-      const bool sel = g.row == 3;
+      const float yy = y + px(44) + 4 * px(28);
+      const bool sel = g.row == 4;
       if (sel) {
         const int start = dl()->VtxBuffer.Size;
         dl()->AddRectFilled(ImVec2(x + px(6), yy - px(2)), ImVec2(x + w - px(6), yy + px(25)), kWhite, px(4));
@@ -972,7 +999,12 @@ void press(Do what, const View& v) {
       else send_act(Act::ToggleLine);
       break;
     case Do::Ask: if (v.active && role != Role::Fighter && v.room.asker == ar::kNone) send_act(Act::Ask); break;
-    case Do::Doubles: if (v.active && !v.room.switch_pending && v.room.members.size() >= 4) send_act(Act::ProposeSwitch); break;
+    case Do::Doubles:
+      if (v.active && !v.room.switch_pending) {
+        const ar::Ring kind = next_kind(v.room);
+        if ((uint8_t)kind < ar::kRingKinds) { host::log("arena panel: propose %s", ar::ring_name(kind)); send_act(Act::ProposeSwitch, (uint8_t)((int)kind + 1)); }
+      }
+      break;
     case Do::Opt0: case Do::Opt1: case Do::Opt2: {
       const int prompt = v.active ? prompt_kind(v) : 0;
       const int i = (int)what - (int)Do::Opt0;
@@ -1035,9 +1067,9 @@ void handle_input(const Frame& f, const View& v) {
   }
   if (g.page == Page::Rules) {
     if (step == 1) g.row = std::max(0, g.row - 1);
-    if (step == 2) g.row = std::min(3, g.row + 1);
-    if (g.row != 3) g.leave_armed = false;
-    if (g.row == 3) {
+    if (step == 2) g.row = std::min(4, g.row + 1);
+    if (g.row != 4) g.leave_armed = false;
+    if (g.row == 4) {
       // Leave the room: A, then A again (one press on the way down the list never leaves by accident).
       if (pressed & kA) {
         if (!g.leave_armed) g.leave_armed = true;
@@ -1054,8 +1086,21 @@ void handle_input(const Frame& f, const View& v) {
     const int delta = step == 3 ? -1 : step == 4 || (pressed & kA) ? 1 : 0;
     if (delta) {
       if (g.row == 0 && v.active) send_act(Act::SetMode, (uint8_t)(((int)v.room.mode + delta + 3) % 3));
-      if (g.row == 1) { g.look = (Look)(((int)g.look + delta + kLookCount) % kLookCount); save(); }
-      if (g.row == 2) { g.tabs = !g.tabs; save(); }
+      if (g.row == 1 && v.active && !v.room.switch_pending) {
+        // The next kind along (Singles, Doubles, Free-for-all): proposed to the room, or the reason it
+        // is not offered shown under the row for a moment.
+        const ar::Ring kind = (ar::Ring)(((int)v.room.kind + delta + ar::kRingKinds) % ar::kRingKinds);
+        std::string why;
+        if (ar::switch_offered(v.room, kind, &why)) {
+          host::log("arena panel: propose %s", ar::ring_name(kind));
+          send_act(Act::ProposeSwitch, (uint8_t)((int)kind + 1));
+        } else {
+          g.match_note = why.empty() ? std::string("Not now") : why;
+          g.match_note_until = ImGui::GetTime() + 3.0;
+        }
+      }
+      if (g.row == 2) { g.look = (Look)(((int)g.look + delta + kLookCount) % kLookCount); save(); }
+      if (g.row == 3) { g.tabs = !g.tabs; save(); }
     }
     if (pressed & kB) { g.page = Page::None; g.row = 0; }
     return;
@@ -1148,14 +1193,17 @@ float z_line(float, float, float above) { return above; }
 float corner(float x0, float x1, float y0, bool red, const View& v, int side, bool tall_to = 0, float tall_y1 = 0) {
   const Room& r = v.room;
   const float w = x1 - x0, cx = x0 + w * .5f;
-  const int fighters = r.doubles ? 2 : 1;
-  const float icon_css = r.doubles ? 52 : (tall_to ? 88 : 80);
+  const bool pair = r.kind != ar::Ring::Singles;   // doubles: a team a side; free-for-all: two fighters a side
+  const int fighters = pair ? 2 : 1;
+  const float icon_css = pair ? 52 : (tall_to ? 88 : 80);
   // Height: 12 + title 15 + 11 + icon + 8 + name 18 + 5 + record 21 + 12 (the sheet's boxes).
   float h = px(12 + 15 + 11) + px(icon_css) + px(8 + 18 + 5 + 21 + 12);
-  if (r.doubles) h += px(18);   // a second name under the pair
+  if (pair) h += px(18);   // a second name under the pair
   const float y1 = tall_to ? tall_y1 : y0 + h;
-  const ImU32 c0 = red ? IM_COL32(216, 52, 60, 140) : IM_COL32(58, 86, 216, 153);
-  const ImU32 c1 = red ? IM_COL32(216, 52, 60, 15) : IM_COL32(58, 86, 216, 15);
+  // A free-for-all has no teams: both corners in the same gold, no red or blue edge.
+  const bool solo = ar::ffa(r);
+  const ImU32 c0 = solo ? IM_COL32(201, 138, 12, 120) : red ? IM_COL32(216, 52, 60, 140) : IM_COL32(58, 86, 216, 153);
+  const ImU32 c1 = solo ? IM_COL32(201, 138, 12, 15) : red ? IM_COL32(216, 52, 60, 15) : IM_COL32(58, 86, 216, 15);
   {
     const int start = dl()->VtxBuffer.Size;
     const float y85 = y0 + (y1 - y0) * .85f;
@@ -1163,22 +1211,23 @@ float corner(float x0, float x1, float y0, bool red, const View& v, int side, bo
     shade(start, y0, y85, c0, c1);
     dl()->AddRectFilled(ImVec2(x0, y85), ImVec2(x1, y1), c1);
   }
-  if (red) dl()->AddRectFilled(ImVec2(x1 - px(3), y0), ImVec2(x1, y1), kRed);
-  else dl()->AddRectFilled(ImVec2(x0, y0), ImVec2(x0 + px(3), y1), kBlue);
+  if (red) dl()->AddRectFilled(ImVec2(x1 - px(3), y0), ImVec2(x1, y1), solo ? kGold2 : kRed);
+  else dl()->AddRectFilled(ImVec2(x0, y0), ImVec2(x0 + px(3), y1), solo ? kGold2 : kBlue);
+  const Ground ground = solo ? Ground::Slate : red ? Ground::Red : Ground::Blue;
   float y = y0 + px(12);
   const Ink title{Face::Title, 15, kWhite, true, 2};
-  text_center(title, cx, line_top(title, y, 15), red ? "RED CORNER" : "BLUE CORNER");
+  text_center(title, cx, line_top(title, y, 15), ar::ffa(r) ? "FREE-FOR-ALL" : red ? "RED CORNER" : "BLUE CORNER");
   y += px(15 + 11);
   const Member* m[2] = {nullptr, nullptr};
-  for (int k = 0; k < fighters; ++k) m[k] = ar::find(r, r.ring[r.doubles ? side * 2 + k : side]);
+  for (int k = 0; k < fighters; ++k) m[k] = ar::find(r, r.ring[pair ? side * 2 + k : side]);
   const float is = px(icon_css);
   if (fighters == 1) {
-    icon(cx - is * .5f, y, is, m[0], false, red ? Ground::Red : Ground::Blue);
+    icon(cx - is * .5f, y, is, m[0], false, ground);
     host_badge(cx, y + is, v, m[0]);
   } else {
     const float gap = px(6);
-    icon(cx - is - gap * .5f, y, is, m[0], false, red ? Ground::Red : Ground::Blue);
-    icon(cx + gap * .5f, y, is, m[1], false, red ? Ground::Red : Ground::Blue);
+    icon(cx - is - gap * .5f, y, is, m[0], false, ground);
+    icon(cx + gap * .5f, y, is, m[1], false, ground);
     host_badge(cx - gap * .5f - is * .5f, y + is, v, m[0]);
     host_badge(cx + gap * .5f + is * .5f, y + is, v, m[1]);
   }
@@ -1196,13 +1245,38 @@ float corner(float x0, float x1, float y0, bool red, const View& v, int side, bo
   y += is + px(8);
   const Ink big{Face::Black, 15, kWhite, false, 1};
   for (int k = 0; k < fighters; ++k) {
-    const std::string name = m[k] ? m[k]->name : std::string("...");
-    text_center(big, cx, line_top(big, y, 18), fit(big, name, w - px(16)));
+    // A free-for-all of three: the fourth spot reads "open spot".
+    const std::string name = m[k] ? m[k]->name : ar::ffa(r) ? std::string("open spot") : std::string("...");
+    Ink nk = big;
+    if (!m[k]) nk = Ink{Face::Body, 11, IM_COL32(111, 123, 152, 255)};
+    if (solo && m[k]) {
+      // The name, then that fighter's own record in gold (and a streak mark).
+      const Ink rk{Face::Bold, 12, kRecordCol};
+      std::string rec = record(*m[k]);
+      if (r.streak_id == m[k]->id && r.streak >= 2) rec += " x" + std::to_string(r.streak);
+      const float rw = text_w(rk, rec) + px(5);
+      const std::string shown = fit_name(nk, name, w - px(16) - rw);
+      const float left = cx - (text_w(nk, shown) + rw) * .5f;
+      text(nk, left, line_top(nk, y, 18), shown);
+      text(rk, left + text_w(nk, shown) + px(5), line_top(rk, y, 18), rec);
+    } else {
+      text_center(nk, cx, line_top(nk, y, 18), fit(nk, name, w - px(16)));
+    }
     y += px(18);
   }
   y += px(5);
-  // The record, the streak beside it, the ping under it (small).
-  const Member* lead = m[0];
+  if (solo) {   // the records are beside the names; the corner still lights up for the hand
+    for (int k = 0; k < fighters; ++k)
+      if (m[k] && hot(x0 + px(4), y0, y1, Do::Member, m[k]->id)) {
+        const std::string p = ping_text(v, m[k]->id);
+        if (!p.empty()) { const Ink pk{Face::Body, 9.5f, IM_COL32(232, 236, 245, 170)}; text_center(pk, cx, y + px(4), p); }
+        break;
+      }
+    return y1;
+  }
+  // The record, the streak beside it, the ping under it (small). A free-for-all: the side's first fighter's
+  // record (each fighter's own shows in the lists); the streak is whoever's it is on this side.
+  const Member* lead = m[0] ? m[0] : m[1];
   if (lead) {
     Ink wl{Face::Title, 21, kGold, true, 2};
     const Ink sm{Face::Body, 10, kPaper, false, 1, false, .5f};
@@ -1289,7 +1363,7 @@ void draw_combined(const Bars& b, const View& v, bool corners_look) {
     const int prompt = prompt_kind(v);
     if (prompt) {
       const int my_slot = ar::ring_slot(r, v.self);
-      const bool left = my_slot == 0 || (my_slot == 1 && r.doubles);
+      const bool left = my_slot == 0 || (my_slot == 1 && r.kind != ar::Ring::Singles);
       std::vector<std::string> l, o;
       const float w = (left ? lw : rw) - pad * 2;
       const float h = prompt_height(w, v, prompt, &l, &o);
@@ -1337,7 +1411,7 @@ void draw_combined(const Bars& b, const View& v, bool corners_look) {
   // Left foot: the prompt (under your own corner) or the plain sentence, then Y and Z.
   const int prompt = prompt_kind(v);
   const int my_slot = ar::ring_slot(r, v.self);
-  const bool prompt_left = my_slot != 1 || r.doubles;   // the blue corner's player answers on the right
+  const bool prompt_left = my_slot != 1 || r.kind != ar::Ring::Singles;   // the blue corner's player answers on the right
   std::vector<std::pair<char, std::string>> left_items =
       prompt && prompt_left && g.focus ? std::vector<std::pair<char, std::string>>{{'A', "Choose"}}
                                        : std::vector<std::pair<char, std::string>>{{'Y', "Rules"}, {'Z', add_label()}};
@@ -1361,11 +1435,11 @@ void draw_combined(const Bars& b, const View& v, bool corners_look) {
   // Watching with the room's match window up: A on this makes it small (picture in picture) or full size.
   if (role != Role::Fighter && ar::watch_layout() != 0) right.insert(right.begin(), {'A', ar::watch_layout() == 1 ? kPipBig : kPipSmall});
   if (g.side == 2 && role != Role::Fighter && r.asker == ar::kNone) right.push_back({'A', "Ask to play next"});
-  if (g.side == 2 && r.members.size() >= 4 && !r.switch_pending) right.push_back({'R', r.doubles ? "Back to singles" : "Doubles"});
+  if (g.side == 2 && !r.switch_pending && (uint8_t)next_kind(r) < ar::kRingKinds) right.push_back({'R', switch_label(next_kind(r))});
   if (g.side == 2) right.push_back({'B', "Close"});
   float rfoot = legend(b.rx0 + pad, rw - pad * 2, bottom, right);
   const Ink cap{Face::Body, 10, kGold, false, 0, false, 1.5f};
-  text(cap, b.rx0 + pad, rfoot - px(6) - px(12), std::string(r.doubles ? "DOUBLES  " : "") + kModeNames[(int)r.mode]);
+  text(cap, b.rx0 + pad, rfoot - px(6) - px(12), fit(cap, kind_caps(r) + kModeNames[(int)r.mode], rw - pad * 2));
   if (prompt && !prompt_left) {
     std::vector<std::string> l, o;
     const float w = rw - pad * 2;
@@ -1393,7 +1467,7 @@ float mode_block(float x, float y, float w, const char* small_caps, const View& 
   const Ink sm{Face::Body, 10, kGold, false, 0, false, 1.5f};
   const Ink md{Face::Title, 15, kWhite, true, 2};
   text(sm, x, y, fit(sm, small_caps, w));
-  const std::string mode = std::string(v.room.doubles ? "DOUBLES " : "") + kModeNames[(int)v.room.mode];
+  const std::string mode = kind_caps(v.room) + kModeNames[(int)v.room.mode];
   float yy = y + px(13);
   if (text_w(md, mode) <= w) { text(md, x, line_top(md, yy, 16), mode); return px(13 + 16); }
   std::string first = mode, rest;
@@ -1422,8 +1496,8 @@ void draw_card(const Bars& b, const View& v, bool ring_box) {
     dl()->AddRect(ImVec2(bx0 - px(1), by0 - px(1)), ImVec2(bx1 + px(1), by0 + bh + px(1)), kRed, rr + px(1), 0, px(2));
     rect_gradient(bx0, by0, bx1, by0 + bh, rr, IM_COL32(70, 85, 124, 255), IM_COL32(27, 35, 56, 255));
     dl()->AddRect(ImVec2(bx0, by0), ImVec2(bx1, by0 + bh), kIconLine, rr, 0, px(2));
-    for (int side = 0; side < 2; ++side) {
-      const Member* m = ar::find(r, r.ring[r.doubles ? side * 2 : side]);
+    for (int side = 0; side < 2 && !ar::ffa(r); ++side) {
+      const Member* m = ar::find(r, r.ring[r.kind != ar::Ring::Singles ? side * 2 : side]);
       // The sheet's ring: portrait (40), 5px, VS, 5px, portrait, centred in the box.
       const float row = px(40 + 5 + 22 + 5 + 40), left = (bx0 + bx1) * .5f - row * .5f;
       const float cx = side ? left + row - px(20) : left + px(20);
@@ -1434,8 +1508,24 @@ void draw_card(const Bars& b, const View& v, bool ring_box) {
         text_center(rk, cx, by0 + px(70), record(*m));
       }
     }
-    const Ink vs{Face::Title, 13, kGold, true, 1};
-    text_center(vs, (bx0 + bx1) * .5f, by0 + px(22), "VS");
+    if (ar::ffa(r)) {
+      // Up to four across: a portrait, the name and the record under it.
+      const int n = ar::fighters(r);
+      const float cell = (bx1 - bx0 - px(8)) / (float)std::max(n, 1), is = std::min(px(34), cell - px(4));
+      const Ink fk{Face::Bold, 10, kWhite, false, 1, true};
+      const Ink rk{Face::Bold, 10, kRecordCol};
+      for (int s = 0, i = 0; s < ar::kRingMax; ++s) {
+        const Member* m = ar::find(r, r.ring[s]);
+        if (!m) continue;
+        const float cx = bx0 + px(4) + cell * (i++ + .5f);
+        icon(cx - is * .5f, by0 + px(12), is, m, m->id == v.self);
+        text_center(fk, cx, by0 + px(54), fit(fk, m->name, cell - px(2)));
+        text_center(rk, cx, by0 + px(70), record(*m));
+      }
+    } else {
+      const Ink vs{Face::Title, 13, kGold, true, 1};
+      text_center(vs, (bx0 + bx1) * .5f, by0 + px(22), "VS");
+    }
     y = by0 + bh + px(18);
   } else {
     y += px(10);
@@ -1505,8 +1595,8 @@ void draw_split(const Bars& b, const View& v) {
     if (m) { y += px(6); slot_card(x, y, w, v, *m, m->id == v.self, false, 36); y += px(48); }
   }
   const Member* a = ar::find(r, r.ring[0]);
-  const Member* c = ar::find(r, r.ring[r.doubles ? 2 : 1]);
-  if (a && c) {
+  const Member* c = ar::find(r, r.ring[r.kind != ar::Ring::Singles ? 2 : 1]);
+  if (a && c && !ar::ffa(r)) {   // a free-for-all has no two sides to score
     const Ink sc{Face::Title, 28, kWhite, true, 2};
     const Ink dash{Face::Title, 17, kGold, true, 2};
     const std::string l = std::to_string(a->wins), rr = std::to_string(c->wins);
@@ -1799,6 +1889,12 @@ void frame(const Frame& f) {
   }
   const View v = ar::view();
   g_warmup_view = slippi::native_practice::snapshot().warmup;
+  // The room reaches four people: one quiet line, once, that doubles and a free-for-all are on offer.
+  {
+    const size_t n = v.active ? v.room.members.size() : 0;
+    if (n >= 4 && g.hint_members < 4 && v.room.kind == ar::Ring::Singles && v.room.ffa_allowed) g.hint_until = f.time + 8.0;
+    g.hint_members = n;
+  }
   const bool visible = f.on_online_menus && !(v.active && v.room.in_game && ar::role(v.room, v.self) == Role::Fighter);
   if (!visible) {
     g.was_visible = false;

@@ -2926,8 +2926,10 @@ int32_t h_slippi_command(uint8_t command, const uint8_t* payload, uint32_t paylo
         }
         if (c == CMD_ARENA_PAIRING && n == 0) {   // shim/mu_slippi_css.c: an arena room's new pairing
           append_be32(reply, slippi::online::arena_pairing());
-          // bit 0: the room locks in a random stage itself (tests); bit 1: this player is in a room now
-          reply.push_back((slippi::arena::locks_in_itself() ? 1 : 0) | (slippi::arena::in_room() ? 2 : 0));
+          // bit 0: the room locks in a random stage itself (tests); bit 1: this player is in a room now;
+          // bit 2: the room's next game is a free-for-all (no team toggle, Start locks in a random stage)
+          reply.push_back((slippi::arena::locks_in_itself() ? 1 : 0) | (slippi::arena::in_room() ? 2 : 0) |
+                          (slippi::arena::css_ffa() ? 4 : 0));
           return true;
         }
         if (c == CMD_PRACTICE_CPU) {   // shim/mu_practice_cpu.c: the settings, or what it is doing

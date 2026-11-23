@@ -332,7 +332,8 @@ bool g_local_random_stage = false;
 Matchmaking::MatchSearchSettings g_last_search;
 // The next search is an arena game under YouGame (arena_start_yg_search): its fighters and the arena's
 // whole word for the match (a player id, longer than the 18 bytes a typed code gets).
-struct ArenaNext { std::vector<std::string> fighters; std::string code; } g_arena_next;
+struct ArenaNext { std::vector<std::string> fighters; std::string code; bool ffa = false; } g_arena_next;
+bool g_arena_ffa_next = false;   // the next search is an arena free-for-all (arena_start_search)
 // The 4-player Friends lobby (yougame_lobby.h) on the 4-door select: armed by the Friends row (the host
 // holds a room) or an accepted lobby invite (a guest joins its room), until the player leaves it (LEAVE).
 // One Control lasts the whole lobby, across its matches. closed: its search failed or its room closed
@@ -1228,6 +1229,8 @@ void start_find_match(const uint8_t* payload, const std::string& friend_room = {
   sj.erase(std::find(sj.begin(), sj.end(), '\0'), sj.end());
   const ArenaNext arena = std::move(g_arena_next);
   g_arena_next = ArenaNext{};
+  search.arena_ffa = g_arena_ffa_next || arena.ffa;
+  g_arena_ffa_next = false;
   if (!arena.fighters.empty()) {
     // An arena game under YouGame: the arena's room carries it. Not a code the player typed, so it
     // stays out of the recent codes, and a pending Discord join is left for the player's own Direct.
@@ -1482,6 +1485,16 @@ int build_verdict(uint8_t remote_count, std::string* why) {
   const bool lobby_match = lobby.open && lobby.plan && lobby.plan->ok;
   for (int i = 0; i < remote_count; ++i) {
     const auto rb = g_netplay->GetRemoteBuild(i);
+    if (g_last_search.arena_ffa && !rb.arena_ffa) {
+      // A free-for-all: a peer whose build has none would start a teams game (desync at best). A
+      // build message still on its way gets the usual wait.
+      const uint64_t since = g_netplay->ConnectedAtMs();
+      const uint64_t now = (uint64_t)std::chrono::duration_cast<std::chrono::milliseconds>(
+          std::chrono::steady_clock::now().time_since_epoch()).count();
+      if (!rb.received && !(since != 0 && now - since >= kBuildWaitMs)) { waiting = true; continue; }
+      *why = "A player's game can't play a free-for-all. Everyone needs the latest Melee Unlocked.";
+      return -1;
+    }
     if (lobby_match) {
       if (lobby.plan->humans != lobby.plan->machines && rb.received && !mu_local_partner_capable(rb.caps2)) {
         *why = "A player's game can't play local partners. Everyone needs the latest Melee Unlocked.";
@@ -2069,12 +2082,19 @@ void prepare_online_match_state(std::vector<uint8_t>& q) {
       }
     }
     rng_offset = decider ? lps.rng_offset : rps[0].rng_offset;
+    // An arena free-for-all: a Teams search played with teams off (every fighter their own team) on a
+    // stage from the doubles list, drawn from the seed every peer agrees on (no stage select).
+    const bool arena_ffa = g_last_search.arena_ffa;
+    if (arena_ffa) {
+      stage_id = stage_pool::agreed_stage(rng_offset, true);
+      alt_stage_mode = 0;
+    }
     uint8_t first_team = ordered[0]->team_id;
     bool all_same_team = true;
     for (auto* s : ordered) if (s->team_id != first_team) all_same_team = false;
     static const uint8_t perms[6][4] = {{0, 0, 1, 1}, {1, 1, 0, 0}, {0, 1, 1, 0}, {1, 0, 0, 1}, {0, 1, 0, 1}, {1, 0, 1, 0}};
     const uint8_t* team_assign = perms[rng_offset % 6];
-    bool teams = g_last_search.mode == Matchmaking::TEAMS;
+    bool teams = g_last_search.mode == Matchmaking::TEAMS && !arena_ffa;
     std::array<int, PLAYER_COUNT_MAX> room_teams;
     room_teams.fill(-1);
     std::array<int, 2> team_color{{0, 1}};   // Doubles: the colour each room team wears (team_colors)
@@ -2127,6 +2147,7 @@ void prepare_online_match_state(std::vector<uint8_t>& q) {
     }
 #endif
     setup_inputs = setup_inputs_hash(sent_selections, room_teams.data(), room_teams_known, setup_squad);
+    if (arena_ffa) setup_inputs = mu_fnv64_u8(setup_inputs, 0xFA);   // a peer not playing a free-for-all refuses the match
     // The block is kept between matches, and a Friends lobby setup writes bytes no other match does
     // (P1/P2 slot types, CPU kind and level, the rules bit): back to the shipped block's first. They
     // are hashed, so two machines with different pasts would otherwise refuse the match.
@@ -2175,7 +2196,8 @@ void prepare_online_match_state(std::vector<uint8_t>& q) {
     // instance test logs show the teams, characters and stage every peer agreed on.
     {
       char setup[160];
-      int len = std::snprintf(setup, sizeof setup, "teams %d stage %u rng %08X:", teams ? 1 : 0, (unsigned)stage_id, rng_offset);
+      int len = std::snprintf(setup, sizeof setup, "%steams %d stage %u rng %08X:", arena_ffa ? "free-for-all " : "", teams ? 1 : 0,
+                              (unsigned)stage_id, rng_offset);
       for (int i = 0; i < PLAYER_COUNT_MAX && len > 0 && len < (int)sizeof setup; ++i)
         if (block[0x61 + i * 0x24] == 0)
           len += std::snprintf(setup + len, sizeof setup - len, " P%d char %u color %u team %u", i + 1, block[0x60 + i * 0x24],
@@ -2927,8 +2949,9 @@ ArenaMatchStatus arena_match_status() {
 }
 
 bool arena_start_search(int mode, const std::string& code, bool locked, uint8_t character, uint8_t color,
-                        uint8_t team, std::string* error) {
+                        uint8_t team, bool ffa, std::string* error) {
   if (mode != Matchmaking::DIRECT && mode != Matchmaking::TEAMS) return false;
+  if (ffa && mode != Matchmaking::TEAMS) return false;
   if (!g_user) init();
   if (session_mode() >= 0 || g_warmup_parked) {
     if (error) *error = g_warmup_parked ? "Warming up: go back to your match first" : "An online session is already active";
@@ -2948,7 +2971,9 @@ bool arena_start_search(int mode, const std::string& code, bool locked, uint8_t 
   find[0] = (uint8_t)mode;
   const std::string sjis = utf8_to_shiftjis(code);
   std::memcpy(find + 1, sjis.data(), std::min<size_t>(18, sjis.size()));
+  g_arena_ffa_next = ffa;
   start_find_match(find);
+  g_arena_ffa_next = false;   // refused before the search read it: never carried to the player's next search
   if (!g_forced_error.empty()) {
     if (error) *error = g_forced_error;
     return false;
@@ -2957,14 +2982,14 @@ bool arena_start_search(int mode, const std::string& code, bool locked, uint8_t 
 }
 
 bool arena_start_yg_search(int mode, const std::vector<std::string>& fighters, const std::string& code, bool locked,
-                           uint8_t character, uint8_t color, uint8_t team, std::string* error) {
-  if (fighters.size() != 2 && fighters.size() != 4) return false;
+                           uint8_t character, uint8_t color, uint8_t team, bool ffa, std::string* error) {
+  if (fighters.size() < 2 || fighters.size() > 4) return false;
   if (!yougame::session()) {
     if (error) *error = "The arena needs a YouGame sign-in";
     return false;
   }
-  g_arena_next = {fighters, utf8_to_shiftjis(code)};
-  const bool ok = arena_start_search(mode, code, locked, character, color, team, error);
+  g_arena_next = {fighters, utf8_to_shiftjis(code), ffa};
+  const bool ok = arena_start_search(mode, code, locked, character, color, team, ffa, error);
   g_arena_next = ArenaNext{};   // refused before the search read it: never carried to the player's next search
   return ok;
 }

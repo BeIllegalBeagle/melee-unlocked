@@ -24,6 +24,7 @@
 #include <deque>
 #include <filesystem>
 #include <map>
+#include <set>
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -50,7 +51,9 @@ enum Msg : uint8_t { kHello = 1, kWelcome = 2, kRoomState = 3, kAction = 4, kRep
                      kClosed = 8,     // kClosed: the host left, the room is over
                      kScore = 9,      // the game's stocks and percent (warm-up room strip); older builds ignore it
                      kWarmup = 10,    // member -> host: this member is in Training (1) or back (0)
-                     kWarming = 11 }; // host -> everyone: who is warming up, a bit per member id (older builds ignore both)
+                     kWarming = 11,   // host -> everyone: who is warming up, a bit per member id (older builds ignore both)
+                     kMeshReady = 12, // fighter -> host: a free-for-all of three on Slippi: my pairs met, my port is free (then the games count)
+                     kMeshGo = 13 };  // host -> the fighters: everyone is ready, start the match now (the games count)
 enum Report : uint8_t { kStarted = 1, kEnded = 2 };
 constexpr uint64_t kRetryMs = 1500;
 
@@ -64,6 +67,7 @@ struct Link {
   uint64_t ready_at = 0;       // when it came up: a link up this long with no hello answered is reopened
   uint64_t refused_at = 0;     // a full room said no on this link (either way): dropped 3 s later
   bool was_ready = false, hello_sent = false;
+  uint8_t wire = kWireLegacy;  // host side: the room wire this member reads (its hello says; older builds say nothing)
   std::string yg;              // under YouGame: the connection at the other end, in the arena's own room
 };
 
@@ -97,7 +101,18 @@ uint32_t g_ended_tag = 0, g_started_tag = 0;   // the host's: reports already ap
 uint32_t g_my_tag = 0;                    // this game's own recording
 bool g_my_online = false;                 // and it is an online match
 std::string g_my_opp;                     // the opponent it is against (the room may move on first)
-bool g_my_doubles = false;                // and it was a doubles game
+Ring g_my_kind = Ring::Singles;           // and the ring's kind in it
+// A free-for-all's end: a loser's report says nothing about who won, so the host waits for the
+// winner's (a few seconds), then counts the game as having no winner.
+uint32_t g_pending_end_tag = 0;
+uint64_t g_pending_end_ms = 0;
+std::atomic<bool> g_css_ffa{false};       // the room's next game is a free-for-all (the select reads it)
+// A Slippi free-for-all of three pairs its fighters up itself (Mesh, below steer_match).
+void mesh_reset();
+void mesh_clear_peer();
+void mesh_note_ready(uint8_t id, uint32_t games);
+void mesh_go(uint32_t games);
+
 uint8_t g_port_team[4] = {0, 0, 0, 0};    // each port's team in it (Game Start)
 std::vector<uint8_t> g_table;             // its command table event, for a sender made at Game Start
 bool g_wait_room = false;                 // a member's game ended: wait for the room to say what is next
@@ -284,6 +299,12 @@ void open_links() {
 }
 
 // ---- the room (host side) ----
+// A member whose build reads only the old room wire (no free-for-all).
+bool legacy_member() {
+  for (const Link& l : g_links) if (l.id != kNone && l.wire < kWireVersion) return true;
+  return false;
+}
+
 void broadcast_warming() {
   if (!g_hosting) return;
   // Members who left are nobody's business any more.
@@ -303,11 +324,16 @@ void broadcast_room() {
   if (!g_hosting || g_room.rev == g_sent_rev) return;
   g_sent_rev = g_room.rev;
   std::vector<uint8_t> m = {kRoomState};
-  const std::vector<uint8_t> bytes = encode(g_room);
+  // A member on a build before free-for-all reads the old wire (the room is never a free-for-all then).
+  const std::vector<uint8_t> bytes = encode(g_room, legacy_member() ? kWireLegacy : kWireVersion);
   m.insert(m.end(), bytes.begin(), bytes.end());
   for (Link& l : g_links) if (l.id != kNone) send(l, m);
-  if (g_room.doubles)
+  if (doubles(g_room))
     event("room rev %u: doubles %s, ring %d %d vs %d %d, line %zu, games %u", g_room.rev,
+          g_room.mode == Mode::WinnerStays ? "winner stays" : g_room.mode == Mode::TakeTurns ? "take turns" : "ask",
+          (int)g_room.ring[0], (int)g_room.ring[1], (int)g_room.ring[2], (int)g_room.ring[3], g_room.line.size(), g_room.games);
+  else if (ffa(g_room))
+    event("room rev %u: free-for-all %s, ring %d %d %d %d, line %zu, games %u", g_room.rev,
           g_room.mode == Mode::WinnerStays ? "winner stays" : g_room.mode == Mode::TakeTurns ? "take turns" : "ask",
           (int)g_room.ring[0], (int)g_room.ring[1], (int)g_room.ring[2], (int)g_room.ring[3], g_room.line.size(), g_room.games);
   else
@@ -324,7 +350,7 @@ bool apply_action(uint8_t who, Act a, uint8_t arg, uint8_t extra = 0) {
     case Act::Answer: return answer(g_room, who, (Answer)arg);
     case Act::GiveUp: return give_up(g_room, who, arg != 0);
     case Act::SetMode: return set_mode(g_room, (Mode)arg);
-    case Act::ProposeSwitch: return propose_switch(g_room, who);
+    case Act::ProposeSwitch: return arg == 0 ? propose_switch(g_room, who) : propose_switch(g_room, who, (Ring)(arg - 1));
     case Act::VoteSwitch: return vote_switch(g_room, who, arg != 0);
     case Act::Leave: {
       if (g_room.in_game && ring_slot(g_room, who) >= 0) game_end(g_room, kNone);
@@ -340,8 +366,20 @@ void member_gone(uint8_t id) {
   apply_action(id, Act::Leave, 0);
 }
 
-// A fighter's report of its game: the first report of each game counts.
-void apply_report(uint8_t what, uint32_t tag, const std::string& winner_code) {
+// The room's game is over: `team` won (kNone: nobody).
+void finish_game(uint32_t tag, uint8_t team, const char* how) {
+  g_ended_tag = tag;
+  g_pending_end_tag = 0;
+  if (!g_room.in_game) game_start(g_room);   // the start report was lost or late
+  const Member* w = team == kNone ? nullptr : find(g_room, g_room.ring[doubles(g_room) ? team * 2 : team]);
+  game_end(g_room, team);
+  event("game %08X ended, winner %s%s", tag, w ? w->code.c_str() : "none", how);
+}
+
+// A fighter's report of its game: the first report of each game counts. `result` is the reporter's
+// own (1 won, 0 lost, 2 no result); -1 from builds before free-for-all, which name the winner's
+// code instead (a loser names the other side).
+void apply_report(uint8_t what, uint32_t tag, const std::string& winner_code, int result, uint8_t from) {
   if (what == kStarted) {
     if (tag == g_ended_tag || tag == g_started_tag) return;
     g_started_tag = tag;
@@ -349,16 +387,36 @@ void apply_report(uint8_t what, uint32_t tag, const std::string& winner_code) {
     return;
   }
   if (what != kEnded || tag == g_ended_tag) return;
-  g_ended_tag = tag;
-  if (!g_room.in_game) game_start(g_room);   // the start report was lost or late
+  const int slot = ring_slot(g_room, from);
+  if (result == 1 && slot >= 0) { finish_game(tag, (uint8_t)team_of_slot(g_room, slot), ""); return; }
+  if (result == 0 && slot >= 0 && !ffa(g_room)) {
+    // Singles and doubles: the other side won.
+    const uint8_t team = (uint8_t)(1 - team_of_slot(g_room, slot));
+    if (doubles(g_room) || g_room.ring[team] != kNone) { finish_game(tag, team, " (the loser's word)"); return; }
+  }
+  if ((result == 0 || (result == 2 && fighters(g_room) > 2)) && slot >= 0) {
+    // A free-for-all (or a no-result report where others may still be playing on): wait for the
+    // winner's own report (they may still be at the results screen); none in a few seconds, no winner.
+    if (g_pending_end_tag != tag) {
+      g_pending_end_tag = tag; g_pending_end_ms = now_ms();
+      event("game %08X: a %s reported, waiting for the winner", tag, result == 0 ? "loser" : "player with no result");
+    }
+    return;
+  }
+  if (result >= 0) { finish_game(tag, kNone, ""); return; }
   uint8_t team = kNone;
   for (const Member& m : g_room.members)
     if (!winner_code.empty() && m.code == winner_code) {
-      const int slot = ring_slot(g_room, m.id);
-      if (slot >= 0) team = (uint8_t)team_of_slot(g_room, slot);
+      const int s = ring_slot(g_room, m.id);
+      if (s >= 0) team = (uint8_t)team_of_slot(g_room, s);
     }
-  game_end(g_room, team);
-  event("game %08X ended, winner %s", tag, winner_code.empty() ? "none" : winner_code.c_str());
+  finish_game(tag, team, "");
+}
+
+// The winner of a free-for-all never reported (they left at the results screen): no winner.
+void pending_end_tick() {
+  if (!g_hosting || !g_pending_end_tag || now_ms() - g_pending_end_ms < 8000) return;
+  finish_game(g_pending_end_tag, kNone, " (the winner never reported)");
 }
 
 void say_room_full(bool theirs) {
@@ -406,7 +464,11 @@ void host_message(Link& from, const std::vector<uint8_t>& m) {
       if (!get_str(m, at, code) || !get_str(m, at, name) || from.id != kNone) return;
       const bool they_host = at + 2 <= m.size() && m[at] != 0;
       const size_t their_count = at + 2 <= m.size() ? m[at + 1] : 1;
+      const uint8_t wire = at + 3 <= m.size() ? m[at + 2] : kWireLegacy;   // builds before free-for-all say nothing
       bool full = g_room.members.size() >= (size_t)room_limit();
+      // A free-for-all is on (or voted on): a build that cannot read it waits outside; between games it
+      // joins and the room goes back to what every build plays (set_ffa_allowed).
+      const bool ffa_busy = wire < kWireVersion && (ffa(g_room) || (g_room.switch_pending && g_room.switch_to == Ring::Ffa));
       if (they_host && !g_test.on) {
         // Two rooms met: the bigger one keeps its host; between equals, the lower connect code hosts.
         // Not when both together would pass the limit: then neither moves (a host that joined a full
@@ -418,13 +480,18 @@ void host_message(Link& from, const std::vector<uint8_t>& m) {
           return;
         }
       }
-      const uint8_t id = full ? kNone : join(g_room, code, name);
+      const uint8_t id = full || ffa_busy ? kNone : join(g_room, code, name);
       from.id = id;
+      from.wire = wire;
       std::vector<uint8_t> w = {kWelcome, id};
       if (full) w.push_back(1);   // why: the room is full (older members ignore the extra byte)
+      else if (ffa_busy) w.push_back(2);   // why: a free-for-all their build cannot play
       send(from, w);
       g_sent_rev = 0xFFFFFFFFu;   // everyone gets the room with the new member
-      if (full) {
+      if (ffa_busy) {
+        event("refused %s for now (a free-for-all their build cannot play)", code.c_str());
+        from.refused_at = now_ms();
+      } else if (full) {
         event("refused %s (the room is full: %d players)", code.c_str(), room_limit());
         from.refused_at = now_ms();
         if (!g_test.on) say_room_full(they_host && their_count > g_room.members.size());   // the smaller side: "That room"
@@ -462,7 +529,7 @@ void host_message(Link& from, const std::vector<uint8_t>& m) {
       size_t at = 6;
       std::string winner;
       get_str(m, at, winner);
-      apply_report(m[1], get32(&m[2]), winner);
+      apply_report(m[1], get32(&m[2]), winner, at < m.size() ? (int)m[at] : -1, from.id);
       return;
     }
     case kFeed: {
@@ -483,6 +550,9 @@ void host_message(Link& from, const std::vector<uint8_t>& m) {
       if (!in_ring_of(g_relay_ring, g_self)) watch_feed(m.data() + 1, m.size() - 1);
       return;
     }
+    case kMeshReady:
+      if (from.id != kNone && m.size() >= 5) mesh_note_ready(from.id, get32(&m[1]));
+      return;
     case kWarmup:
       if (from.id != kNone && from.id < 16 && m.size() >= 2) {
         const uint16_t bit = (uint16_t)(1u << from.id);
@@ -885,6 +955,10 @@ void member_message(const std::vector<uint8_t>& m) {
           // A full room: this player is not in it. Say so beside the room tab for a while.
           say_room_full(true);
           g_close_room = true;
+        } else if (g_self == kNone && m.size() >= 3 && m[2] == 2 && !g_test.on) {
+          g_notice = "That room is playing a free-for-all this build cannot join";
+          g_notice_until = now_ms() + 10000;
+          g_close_room = true;
         }
       }
       return;
@@ -910,6 +984,9 @@ void member_message(const std::vector<uint8_t>& m) {
       return;
     case kScore:
       take_score(m);
+      return;
+    case kMeshGo:
+      if (m.size() >= 5) mesh_go(get32(&m[1]));
       return;
     case kWarming:
       if (m.size() >= 3) {
@@ -971,7 +1048,9 @@ void room_over_here(const char* why, bool end_search) {
   }
   g_active = false; g_hosting = false; g_room = Room{}; g_self = kNone; g_status.clear();
   g_wait_room = false; g_pair_code.clear(); g_yield_to = nullptr; g_sent_rev = 0xFFFFFFFFu;
-  g_next_match_ms = 0; g_test_wait_since = 0; g_relay_tag = 0; g_relay_from = kNone;
+  g_next_match_ms = 0; g_test_wait_since = 0; g_relay_tag = 0; g_relay_from = kNone; g_pending_end_tag = 0;
+  mesh_reset();
+  mesh_clear_peer();
   g_ping.fill(-1);
   event("%s", why);
 }
@@ -1178,6 +1257,7 @@ void service_links() {
       put_str(h, g_name);
       h.push_back(g_hosting ? 1 : 0);
       h.push_back((uint8_t)g_room.members.size());
+      h.push_back(kWireVersion);   // this build reads free-for-all rooms (builds before it stop at the count)
       l.hello_sent = send(l, h);
     }
     std::vector<uint8_t> m;
@@ -1260,6 +1340,7 @@ void service_yg_links() {
       put_str(h, g_name);
       h.push_back(0);
       h.push_back(1);
+      h.push_back(kWireVersion);
       l.hello_sent = send(l, h);
       l.ready_at = now;
     }
@@ -1320,17 +1401,30 @@ void send_pings() {
 // ---- the match: start the right Direct search between games ----
 const Member* opponent() {
   const int slot = ring_slot(g_room, g_self);
-  if (slot < 0 || g_room.doubles) return nullptr;
+  if (slot < 0 || g_room.kind != Ring::Singles) return nullptr;
   return find(g_room, g_room.ring[slot ^ 1]);
 }
 
 // What this member's game should be searching for between games: the opponent's code (singles), or
 // the room's Teams code with everyone in the ring (doubles). False when it should not play.
-struct Target { int mode = 0; std::string code, label; uint8_t team = 0; std::vector<uint8_t> others; };
+struct Target { int mode = 0; std::string code, label; uint8_t team = 0; bool ffa = false; std::vector<uint8_t> others; };
 bool target(Target& t) {
   const int slot = ring_slot(g_room, g_self);
   if (slot < 0) return false;
-  if (!g_room.doubles) {
+  if (ffa(g_room)) {
+    // Free-for-all: everyone in the ring searches Teams with the host's code (the match is made with
+    // teams off, see slippi_online arena_ffa); three or four fighters.
+    const Member* host = find(g_room, owner(g_room));
+    if (!host || !ring_ready(g_room)) return false;
+    t.mode = Matchmaking::TEAMS;
+    t.code = host->code;
+    t.label = "free-for-all";
+    t.team = 0;
+    t.ffa = true;
+    for (int s = 0; s < kRingMax; ++s) if (s != slot && g_room.ring[s] != kNone) t.others.push_back(g_room.ring[s]);
+    return (int)t.others.size() >= kFfaMin - 1;
+  }
+  if (!doubles(g_room)) {
     const Member* opp = opponent();
     if (!opp) return false;
     t.mode = Matchmaking::DIRECT;
@@ -1348,6 +1442,218 @@ bool target(Target& t) {
   t.team = (uint8_t)(slot / 2);
   for (int s = 0; s < 4; ++s) if (s != slot && g_room.ring[s] != kNone) t.others.push_back(g_room.ring[s]);
   return t.others.size() == 3;
+}
+
+// A Slippi free-for-all of three. Slippi's server makes a Teams match only of four, so three fighters
+// make the match themselves: each pair finds each other by a Direct search (as the room's links do),
+// every one of this fighter's searches on one port of its own, so the pair's address and port are the
+// ones the match will use; the match is then made from those addresses (Matchmaking::local_peer, the
+// way the local test harness peers games), over the host's code, with the free-for-all rules. Pairs go
+// in one order on every PC ((0,1), (0,2), (1,2) by ring slot), so a fighter busy with one pair is
+// searched for by the next until it gets there. Only on Slippi (YouGame's room carries any count).
+struct Mesh {
+  bool on = false;
+  std::string key;                 // the ring and game it is for
+  uint16_t port = 0;
+  size_t step = 0;                 // the pair being searched
+  std::vector<std::pair<uint8_t, std::string>> pairs;   // the other fighter of each of this one's pairs
+  std::map<uint8_t, std::string> found;                 // member -> "ip:port" the pair search named
+  std::unique_ptr<Matchmaking> mm;
+  std::shared_ptr<std::atomic<bool>> closing;   // the last pair's socket and search being destroyed (set when gone)
+  uint64_t retry_at = 0, wait_until = 0;
+  bool ready_sent = false;         // told the host every pair met (kMeshReady)
+  bool go = false;                 // the host said everyone is ready (kMeshGo)
+} g_mesh;
+bool g_mesh_peer = false;   // Matchmaking::local_peer is the mesh's (cleared when its match is over)
+// The host's roll of fighters ready for the free-for-all of three (kMeshReady), for this game.
+std::set<uint8_t> g_mesh_ready;
+uint32_t g_mesh_ready_games = 0xFFFFFFFFu;
+
+// The host: every fighter's pairs met and ports are free: everyone starts the match at once (a fighter
+// that started first connected to a pair's socket still closing and lost its peers).
+void mesh_check_go() {
+  if (!g_hosting || !ffa(g_room) || g_mesh_ready_games != g_room.games) return;
+  for (int s = 0; s < kRingMax; ++s)
+    if (g_room.ring[s] != kNone && !g_mesh_ready.count(g_room.ring[s])) return;
+  std::vector<uint8_t> m = {kMeshGo};
+  put32(m, g_room.games);
+  for (Link& l : g_links) if (l.id != kNone && ring_slot(g_room, l.id) >= 0) send(l, m);
+  if (ring_slot(g_room, g_self) >= 0) g_mesh.go = true;
+  event("free-for-all of three: every fighter is ready, go (game %u)", g_room.games);
+  g_mesh_ready.clear();
+  g_mesh_ready_games = 0xFFFFFFFFu;
+}
+void mesh_go(uint32_t games) {
+  if (games != g_room.games || !g_mesh.on) return;
+  g_mesh.go = true;
+  event("free-for-all of three: go");
+}
+void mesh_note_ready(uint8_t id, uint32_t games) {
+  if (games != g_room.games || ring_slot(g_room, id) < 0) return;
+  if (g_mesh_ready_games != games) { g_mesh_ready.clear(); g_mesh_ready_games = games; }
+  g_mesh_ready.insert(id);
+  mesh_check_go();
+}
+
+void mesh_reset() {
+  drop_later(g_mesh.mm);
+  g_mesh = Mesh{};
+}
+// The mesh's port is free again (the last pair's socket, closed off this thread, has let go of it).
+bool port_free(uint16_t port) {
+  const SOCKET s = socket(AF_INET, SOCK_DGRAM, 0);
+  if (s == INVALID_SOCKET) return true;
+  sockaddr_in a{};
+  a.sin_family = AF_INET;
+  a.sin_port = htons(port);
+  a.sin_addr.s_addr = htonl(INADDR_ANY);
+  const bool ok = bind(s, (sockaddr*)&a, sizeof a) == 0;
+  closesocket(s);
+  return ok;
+}
+void mesh_clear_peer() {
+  if (!g_mesh_peer) return;
+  Matchmaking::local_peer = Matchmaking::LocalPeer{};
+  g_mesh_peer = false;
+  event("free-for-all of three: the match's peering is cleared");
+}
+
+// One step of the mesh for `t` (a free-for-all of three on Slippi); the room's next match once every
+// pair has met. Called between games from the online character select, about three times a second.
+void mesh_tick(const Target& t, const std::string& key) {
+  const uint64_t now = now_ms();
+  const int slot = ring_slot(g_room, g_self);
+  if (!g_mesh.on || g_mesh.key != key) {
+    mesh_reset();
+    mesh_clear_peer();
+    g_mesh.on = true;
+    g_mesh.key = key;
+    uint32_t h = 2166136261u;
+    for (char c : g_code) { h ^= (uint8_t)c; h *= 16777619u; }
+    h ^= g_room.games * 7919u;
+    g_mesh.port = (uint16_t)(52000 + h % 5000);
+    for (int a = 0; a < kRingMax; ++a)
+      for (int b = a + 1; b < kRingMax; ++b) {
+        if (g_room.ring[a] == kNone || g_room.ring[b] == kNone) continue;
+        const uint8_t other = g_room.ring[a] == g_self ? g_room.ring[b] : g_room.ring[b] == g_self ? g_room.ring[a] : kNone;
+        if (other == kNone) continue;
+        const Member* m = find(g_room, other);
+        if (m) g_mesh.pairs.push_back({other, m->code});
+      }
+    event("free-for-all of three: pairing up by code on port %u (%zu pairs)", g_mesh.port, g_mesh.pairs.size());
+  }
+  if (now < g_mesh.wait_until) return;
+  if (g_mesh.closing) {
+    // The last pair's socket and search are being destroyed off this thread: the port is theirs until
+    // they are gone (ENet's sockets share a port, and a lingering one takes the new one's packets).
+    if (!g_mesh.closing->load()) {
+      if (now > g_mesh.wait_until + 30000) { event("free-for-all of three: a pair's socket never closed, starting over"); mesh_reset(); }
+      return;
+    }
+    g_mesh.closing.reset();
+    ++g_mesh.step;
+    g_mesh.wait_until = now + 200;
+    return;
+  }
+  if (g_mesh.step < g_mesh.pairs.size()) {
+    const auto& [id, code] = g_mesh.pairs[g_mesh.step];
+    const Member* m = find(g_room, id);
+    const std::string name = m ? m->name : code;
+    if (!g_mesh.mm) {
+      if (now < g_mesh.retry_at) return;
+      if (!port_free(g_mesh.port)) {   // something else still holds the port (the last game's connection closing)
+        if (now > g_mesh.wait_until + 60000) { event("free-for-all of three: port %u still busy, starting over", g_mesh.port); mesh_reset(); }
+        return;
+      }
+      g_mesh.mm = online::arena_matchmaking();
+      if (!g_mesh.mm) { g_mesh.retry_at = now + 3000; return; }
+      Matchmaking::MatchSearchSettings search;
+      search.mode = Matchmaking::DIRECT;
+      search.connect_code = utf8_to_shiftjis(code);
+      g_mesh.mm->SetLocalPort(g_mesh.port);
+      g_mesh.mm->FindMatch(search);
+      event("free-for-all of three: pairing with %s", code.c_str());
+      g_status = "Pairing with " + name;
+      return;
+    }
+    const auto state = g_mesh.mm->GetMatchmakeState();
+    if (state == Matchmaking::CONNECTION_SUCCESS) {
+      const std::vector<std::string> addrs = g_mesh.mm->RemoteAddresses();
+      // The pair met: its connection is abandoned at once (no goodbye to wait for), and the connection
+      // and the search are destroyed off this thread; the next step waits for that (closing).
+      std::unique_ptr<NetplayClient> np = g_mesh.mm->GetNetplayClient();
+      if (np) np->Abandon();
+      auto flag = std::make_shared<std::atomic<bool>>(false);
+      std::thread([np = std::move(np), mm = std::move(g_mesh.mm), flag]() mutable { np.reset(); mm.reset(); flag->store(true); }).detach();
+      g_mesh.mm.reset();
+      if (addrs.empty()) {
+        event("free-for-all of three: the pair with %s named no address: again", code.c_str());
+        g_mesh.retry_at = now + 2000;
+        g_mesh.wait_until = now;
+        // The pair is tried again: closing must pass first, then the step stays where it is.
+        g_mesh.closing = flag;
+        --g_mesh.step;   // closing advances it back to this pair
+        return;
+      }
+      g_mesh.found[id] = addrs[0];
+      event("free-for-all of three: paired with %s at %s", code.c_str(), addrs[0].c_str());
+      g_mesh.closing = flag;
+      g_mesh.wait_until = now;
+      return;
+    }
+    if (state == Matchmaking::ERROR_ENCOUNTERED) {
+      event("free-for-all of three: the search for %s failed: %s", code.c_str(), g_mesh.mm->GetErrorMessage().c_str());
+      drop_later(g_mesh.mm);
+      g_mesh.retry_at = now + 3000;
+      g_status = "Could not reach " + name + ", trying again";
+    }
+    return;
+  }
+  // Every pair met: the match, peered from the addresses the pairs named, in ring order, once the last
+  // pair's socket has let go of the port.
+  if (!port_free(g_mesh.port)) {
+    if (now > g_mesh.wait_until + 60000) { event("free-for-all of three: port %u still busy before the match, starting over", g_mesh.port); mesh_reset(); }
+    return;
+  }
+  if (!g_mesh.ready_sent) {
+    g_mesh.ready_sent = true;
+    g_mesh.wait_until = now;
+    if (g_hosting) mesh_note_ready(g_self, g_room.games);
+    else { std::vector<uint8_t> m = {kMeshReady}; put32(m, g_room.games); send_to_host(m); }
+    g_status = "Waiting for the others";
+    event("free-for-all of three: ready (game %u)", g_room.games);
+  }
+  if (!g_mesh.go) {
+    if (now > g_mesh.wait_until + 30000) { event("free-for-all of three: the others never got ready, starting over"); mesh_reset(); }
+    return;
+  }
+  Matchmaking::LocalPeer lp;
+  lp.enabled = true;
+  lp.local_index = slot;
+  lp.local_port = g_mesh.port;
+  for (int s = 0; s < kRingMax; ++s) {
+    if (g_room.ring[s] == kNone || g_room.ring[s] == g_self) continue;
+    const Member* m = find(g_room, g_room.ring[s]);
+    const auto it = g_mesh.found.find(g_room.ring[s]);
+    if (!m || it == g_mesh.found.end()) { mesh_reset(); return; }
+    lp.remotes.push_back(it->second);
+    lp.names.push_back(m->name);
+    lp.codes.push_back(m->code);
+  }
+  Matchmaking::local_peer = lp;
+  g_mesh_peer = true;
+  std::string error;
+  const bool started = online::arena_start_search(t.mode, t.code, false, g_test.character, 0, 0, true, &error);
+  if (started) {
+    event("free-for-all of three: match on port %u with %s and %s (slot %d)", g_mesh.port, lp.remotes[0].c_str(), lp.remotes[1].c_str(), slot);
+    g_status = "Connecting to the free-for-all";
+    g_mesh.on = false;   // done; a failed match or the next game starts the pairing over
+  } else {
+    event("free-for-all of three: could not start the match: %s", error.c_str());
+    mesh_clear_peer();
+    g_mesh.retry_at = now + 3000;
+    g_mesh.on = false;
+  }
 }
 
 // Tests: MELEE_TEST_ARENA_AUTOLOCK=1 locks a real room's connected pair in at once (test rooms do it
@@ -1376,8 +1682,10 @@ void steer_match() {
   // The search's own state: a pair that has just connected is not an "active session" yet.
   const bool searching = st.state >= (int)Matchmaking::INITIALIZING && st.state <= (int)Matchmaking::CONNECTION_SUCCESS;
   const bool ours = st.mode == Matchmaking::DIRECT || st.mode == Matchmaking::TEAMS;
+  if (g_mesh_peer && !st.active && !searching) mesh_clear_peer();   // the mesh's match is over
   Target t;
   if (!target(t)) {
+    if (g_mesh.on) mesh_reset();
     // Out of the ring: the next pair this member plays is a new one, even against the same opponent
     // as before. Kept, a member who sat out and came back against their last opponent took it for a
     // rematch on their side only, and kept the winner and loser of a game long gone (or none at all,
@@ -1455,20 +1763,28 @@ void steer_match() {
     g_pair_code = pairing;
     g_pair_games = g_room.games;
   }
+  // A Slippi free-for-all of three: no Teams match of three on Slippi's server; the fighters pair up
+  // and make the match themselves (Mesh above).
+  if (t.ffa && t.others.size() == 2 && !g_yg && !g_test.on) {
+    mesh_tick(t, pairing + "/" + std::to_string(g_room.games));
+    g_next_match_ms = now_ms() + 300;
+    return;
+  }
+  if (g_mesh.on) mesh_reset();
   std::string error;
   const bool locked = g_test.on && !test_press_start();
   bool started;
   if (g_yg) {
     // The arena's room carries the game: its fighters are found by their YouGame ids, in ring order.
-    std::vector<std::string> fighters;
+    std::vector<std::string> ring_ids;
     for (int s = 0; s < ring_size(g_room); ++s)
-      if (const Member* m = find(g_room, g_room.ring[s])) fighters.push_back(m->code);
-    started = online::arena_start_yg_search(t.mode, fighters, t.code, locked, g_test.character, 0, t.team, &error);
+      if (const Member* m = find(g_room, g_room.ring[s])) ring_ids.push_back(m->code);
+    started = online::arena_start_yg_search(t.mode, ring_ids, t.code, locked, g_test.character, 0, t.team, t.ffa, &error);
   } else {
-    started = online::arena_start_search(t.mode, t.code, locked, g_test.character, 0, t.team, &error);
+    started = online::arena_start_search(t.mode, t.code, locked, g_test.character, 0, t.team, t.ffa, &error);
   }
   if (started) {
-    event("searching for %s (%s)", t.code.c_str(), t.mode == Matchmaking::TEAMS ? "doubles" : "singles");
+    event("searching for %s (%s)", t.code.c_str(), t.ffa ? "free-for-all" : t.mode == Matchmaking::TEAMS ? "doubles" : "singles");
     g_status = "Connecting to " + t.label;
   } else {
     event("could not search for %s: %s", t.code.c_str(), error.c_str());
@@ -1487,13 +1803,16 @@ void steer_match() {
 // cover asking, answering and the doubles vote end to end. Steps, each once and in order, between
 // games once the room has finished at least N games:
 //   mode:<N>:winner|turns|ask      ask:<N>:<member>      answer:<N>:yes|winner|no (every fighter)
-//   doubles:<N>                    (proposed by the host; every voter says yes)
+//   doubles:<N>[:<members>] | ffa:<N>[:<members>] | singles:<N>   (proposed by the host once that many members
+//                                  are in, default the kind's own least; every voter says yes)
+//   watch:<N>:<member>             (that member steps out of the line to just watch)
 struct PlanStep { std::string what, arg; uint32_t after = 0; uint8_t member = kNone; bool done = false; };
 std::vector<PlanStep> g_plan;
 bool g_plan_read = false;
 
 void run_test_plan() {
-  if (!g_test.on || !g_hosting) return;
+  static const bool named = std::getenv("MELEE_ARENA_TEST_PLAN") != nullptr;
+  if (!g_hosting || !(g_test.on || named)) return;
   if (!g_plan_read) {
     g_plan_read = true;
     const char* env = std::getenv("MELEE_ARENA_TEST_PLAN");
@@ -1517,14 +1836,21 @@ void run_test_plan() {
   for (PlanStep& p : g_plan) {
     if (p.done) continue;
     if (g_room.games < p.after) return;   // in order: wait for this one
+    // A switch waits for the people it needs; a watch step waits for that member.
+    const int named = p.arg.empty() ? 0 : std::atoi(p.arg.c_str());
+    if ((p.what == "doubles" && (int)g_room.members.size() < std::max(4, named)) ||
+        (p.what == "ffa" && (int)g_room.members.size() < std::max(kFfaMin, named))) return;
+    if (p.what == "watch" && !find(g_room, (uint8_t)std::atoi(p.arg.c_str()))) return;
     bool ok = false;
     if (p.what == "mode") ok = set_mode(g_room, p.arg == "turns" ? Mode::TakeTurns : p.arg == "ask" ? Mode::Ask : Mode::WinnerStays);
+    else if (p.what == "watch") ok = role(g_room, (uint8_t)std::atoi(p.arg.c_str())) == Role::InLine && toggle_line(g_room, (uint8_t)std::atoi(p.arg.c_str()));
     else if (p.what == "ask") ok = ask(g_room, p.member);
     else if (p.what == "answer") {
       const Answer a = p.arg == "no" ? Answer::No : p.arg == "winner" ? Answer::YesAndPlayWinner : Answer::Yes;
       for (int s = 0; s < ring_size(g_room) && g_room.asker != kNone; ++s) ok = answer(g_room, g_room.ring[s], a) || ok;
-    } else if (p.what == "doubles") {
-      ok = propose_switch(g_room, g_self);
+    } else if (p.what == "doubles" || p.what == "ffa" || p.what == "singles") {
+      const Ring kind = p.what == "doubles" ? Ring::Doubles : p.what == "ffa" ? Ring::Ffa : Ring::Singles;
+      ok = propose_switch(g_room, g_self, kind);
       for (uint8_t v : switch_voters(g_room)) vote_switch(g_room, v, true);
     }
     p.done = true;
@@ -1533,6 +1859,7 @@ void run_test_plan() {
 }
 
 void publish_view() {
+  g_css_ffa.store(g_active && g_self != kNone && ffa(g_room));
   View v;
   v.active = g_active;
   v.hosting = g_hosting;
@@ -1733,6 +2060,8 @@ void tick() {
   }
   send_pings();
   report_character();
+  if (g_hosting && set_ffa_allowed(g_room, !legacy_member())) event("free-for-all %s", g_room.ffa_allowed ? "available: every build plays it" : "off: a member's build is older");
+  pending_end_tick();
   run_test_plan();
   broadcast_room();
   steer_match();
@@ -1834,9 +2163,10 @@ void recording_event(const uint8_t* data, uint32_t size) {
     g_my_online = n >= 0x2F8 && (start[0x1A3] == 0x08 || start[0x2BD] != 0) && ring_slot(g_room, g_self) >= 0;
     g_my_tag = feed::game_tag(start, n);
     if (g_my_online) close_viewer();   // playing now: the last game's viewer window has had its turn
-    g_my_doubles = g_room.doubles;
+    g_my_kind = g_room.kind;
     feed::port_teams(start, n, g_port_team);
-    if (!g_my_doubles) { const Member* opp = opponent(); g_my_opp = opp ? opp->code : std::string(); }
+    if (g_my_kind == Ring::Singles) { const Member* opp = opponent(); g_my_opp = opp ? opp->code : std::string(); }
+    else if (g_my_kind == Ring::Ffa) { g_my_opp.clear(); }   // a loser cannot name the winner: the report's result byte says
     else {
       // Doubles: a player of the other team stands for it in the report.
       const int slot = ring_slot(g_room, g_self);
@@ -1844,7 +2174,7 @@ void recording_event(const uint8_t* data, uint32_t size) {
       g_my_opp = other ? other->code : std::string();
     }
     // The first fighter sends the game out when anybody is watching.
-    const bool watchers = g_room.members.size() > (size_t)ring_size(g_room);
+    const bool watchers = g_room.members.size() > (size_t)fighters(g_room);
     g_sending = g_my_online && g_room.ring[0] == g_self && watchers;
     if (g_sending) {
       g_sender = feed::Sender{};
@@ -1871,14 +2201,17 @@ void recording_event(const uint8_t* data, uint32_t size) {
     std::vector<uint8_t> m = {kReport, (uint8_t)(command == 0x36 ? kStarted : kEnded)};
     put32(m, g_my_tag);
     std::string winner;
+    int result = 2;   // the report's own result: 1 won, 0 lost, 2 no result
     // Game End: the method (1 time, 2 game, 3 game in newer recordings; 7 is a no contest), the
     // LRA-Start port, then each port's placement. Whoever placed first wins (in doubles, their team).
     if (command == 0x39) {
-      const int result = feed::my_result(data + 1, size - 1, online::local_player_index(), g_port_team, g_my_doubles);
+      result = feed::my_result(data + 1, size - 1, online::local_player_index(), g_port_team, g_my_kind == Ring::Doubles);
       if (result >= 0) winner = result ? g_code : g_my_opp;
+      if (result < 0) result = 2;
     }
     put_str(m, winner);
-    if (g_hosting) apply_report(m[1], g_my_tag, winner);
+    m.push_back((uint8_t)result);   // builds before free-for-all stop at the code
+    if (g_hosting) apply_report(m[1], g_my_tag, winner, result, g_self);
     else send_to_host(m);
     if (command == 0x39) {
       event("my game %08X ended (winner %s)", g_my_tag, winner.empty() ? "none" : winner.c_str());
@@ -1909,13 +2242,13 @@ void act(Act a, uint8_t arg, const std::string& text) {
 }
 
 bool search_busy() { return g_search_busy.load(); }
+bool css_ffa() { return g_css_ffa.load(); }
 
 // ---- warm-up room ----
 bool turn_called() {
   if (!g_active || g_self == kNone || g_room.in_game) return false;
   if (ring_slot(g_room, g_self) < 0) return false;
-  for (int s = 0; s < ring_size(g_room); ++s) if (g_room.ring[s] == kNone) return false;
-  return true;
+  return ring_ready(g_room);
 }
 
 bool warmup_ok(std::string* why) {
@@ -1970,9 +2303,13 @@ WarmupInfo warmup_info() {
       if (m->name.empty()) { const size_t hash = s.find('#'); if (hash != std::string::npos) s.resize(hash); }
       return s;
     };
-    if (g_room.doubles)
+    if (doubles(g_room))
       w.versus = label(g_room.ring[0]) + " & " + label(g_room.ring[1]) + " vs " + label(g_room.ring[2]) + " & " + label(g_room.ring[3]);
-    else
+    else if (ffa(g_room)) {
+      w.versus.clear();
+      for (int s = 0; s < kRingMax; ++s)
+        if (g_room.ring[s] != kNone) w.versus += (w.versus.empty() ? "" : " vs ") + label(g_room.ring[s]);
+    } else
       w.versus = label(g_room.ring[0]) + " vs " + label(g_room.ring[1]);
     w.score = g_score;
     w.score.live = g_score.live && g_score_tag == g_receiver_tag && g_receiver_tag != 0;
@@ -2038,8 +2375,8 @@ bool room_just_ended() {
 }
 
 namespace {
-const char* const kFixtureStates[] = {"alone", "n2", "n3", "n5", "n8", "refused", "asking", "prompt", "watching", "doubles", "linklost"};
-constexpr int kFixtureStateCount = 11;
+const char* const kFixtureStates[] = {"alone", "n2", "n3", "n5", "n8", "refused", "asking", "prompt", "watching", "doubles", "linklost", "ffa", "ffavote"};
+constexpr int kFixtureStateCount = 13;
 constexpr int kFixtureLooks = 5;
 std::string fixture_spec() {
   static const std::string spec = [] { const char* s = host::test_env::getenv("MELEE_TEST_ARENA_FIXTURE"); return std::string(s ? s : ""); }();
@@ -2065,7 +2402,7 @@ View build_fixture(const std::string& state, bool wide, const std::string& spec)
     int n = 3;
     if (state.size() > 1 && state[0] == 'n') n = std::atoi(state.c_str() + 1);
     else if (state == "alone") n = 1;
-    else if (state == "doubles") n = 5;
+    else if (state == "doubles" || state == "ffa" || state == "ffavote") n = 5;
     else if (state == "watching" || state == "asking" || state == "prompt" || state == "linklost") n = 4;
     n = std::clamp(n, 1, kMaxMembers);
     static const char* const kNames[] = {"HERO", "WISE", "PEACE", "MOONKEH", "PARTY", "JJASHYA", "KAI", "ROSE",
@@ -2096,6 +2433,13 @@ View build_fixture(const std::string& state, bool wide, const std::string& spec)
     if (state == "asking" && n >= 3) { v.self = r.members[2].id; ask(r, v.self); v.hosting = false; v.status = "Asked to play next"; }
     if (state == "prompt" && n >= 3) { ask(r, r.members[2].id); }
     if (state == "doubles") { propose_switch(r, r.members[0].id); vote_switch(r, r.members[0].id, true); }
+    if (state == "ffa" || state == "ffavote") {
+      set_ffa_allowed(r, true);
+      propose_switch(r, r.members[0].id, Ring::Ffa);
+      for (uint8_t id : switch_voters(r)) vote_switch(r, id, true);
+      r.games = 4; r.streak_id = r.ring[2]; r.streak = 2;
+      if (state == "ffavote") { propose_switch(r, r.members[0].id, Ring::Doubles); vote_switch(r, r.members[0].id, true); }
+    }
     if (state == "linklost" && n >= 2) { v.self = r.members[2].id; v.hosting = false; v.linked = false; v.status = "Lost the link to the room. Reconnecting"; }
     v.room = r;
     host::log("arena: test fixture %s (%s), %d members, valid %d", state.c_str(), spec.c_str(), (int)r.members.size(), valid(r) ? 1 : 0);

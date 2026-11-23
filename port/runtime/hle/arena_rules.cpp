@@ -7,8 +7,6 @@
 namespace slippi::arena {
 namespace {
 
-constexpr uint8_t kWireVersion = 2;
-
 std::string clean(const std::string& s, size_t max, bool upper) {
   std::string out;
   for (char c : s) {
@@ -38,29 +36,66 @@ void clear_choices(Room& r) {
   r.leaving_slot = kNone; r.incoming = kNone; r.leaver_plays_winner = false;
 }
 
-// Keeps the ring full when it can be: an empty slot takes the front of the line. Doubles that can no
-// longer fill four slots go back to singles (the first fighters in slot order stay, the others go to
-// the front of the line).
+void clear_switch(Room& r) { r.switch_pending = false; r.switch_votes = 0; r.switch_to = Ring::Singles; }
+
+void reset_tenure(Room& r) { for (uint16_t& t : r.tenure) t = 0; }
+
+// A free-for-all keeps its fighters in the first slots (a slot freed in the middle closes up), so
+// slot order stays join order and the panel's corners read the same everywhere.
+void compact_ring(Room& r) {
+  if (!ffa(r)) return;
+  int to = 0;
+  for (int s = 0; s < kRingMax; ++s) {
+    if (r.ring[s] == kNone) continue;
+    if (s != to) { r.ring[to] = r.ring[s]; r.tenure[to] = r.tenure[s]; r.ring[s] = kNone; r.tenure[s] = 0; }
+    ++to;
+  }
+}
+
+// The ring shrinks to singles: the first two fighters in slot order stay, the others go to the front
+// of the line in order (a doubles ring keeps one of each team, the first of each).
+void shrink_to_singles(Room& r) {
+  std::vector<uint8_t> in;
+  if (doubles(r)) {
+    // One player from each team stays; their partners go to the front of the line.
+    in = {r.ring[0], r.ring[2], r.ring[1], r.ring[3]};
+  } else {
+    for (int s = 0; s < kRingMax; ++s) in.push_back(r.ring[s]);
+  }
+  in.erase(std::remove(in.begin(), in.end(), kNone), in.end());
+  r.kind = Ring::Singles;
+  for (int s = 0; s < kRingMax; ++s) { r.ring[s] = kNone; r.tenure[s] = 0; }
+  for (size_t i = 0; i < in.size(); ++i) {
+    if (i < 2) r.ring[i] = in[i];
+    else r.line.insert(r.line.begin() + (std::ptrdiff_t)(i - 2), in[i]);
+  }
+  clear_switch(r);
+  clear_choices(r);
+  r.streak_id = kNone; r.streak = 0;
+}
+
+// Keeps the ring full when it can be: between games an empty slot takes the front of the line (during
+// a game the ring is the game's). A doubles ring that cannot fill four slots goes on as a free-for-all
+// when three remain and every build plays one, else as singles; a free-for-all under kFfaMin goes to
+// singles.
 void normalize(Room& r) {
   const int n = ring_size(r);
-  for (int s = 0; s < n; ++s)
-    if (r.ring[s] == kNone && !r.line.empty()) { r.ring[s] = pop_front(r); r.tenure[s] = 0; }
-  if (r.doubles) {
-    bool full = true;
-    for (int s = 0; s < 4; ++s) if (r.ring[s] == kNone) full = false;
-    if (!full) {
-      std::vector<uint8_t> in;
-      for (int s = 0; s < 4; ++s) if (r.ring[s] != kNone) in.push_back(r.ring[s]);
-      r.doubles = false;
-      for (int s = 0; s < 4; ++s) { r.ring[s] = kNone; r.tenure[s] = 0; }
-      for (size_t i = 0; i < in.size(); ++i) {
-        if (i < 2) r.ring[i] = in[i];
-        else r.line.insert(r.line.begin() + (std::ptrdiff_t)(i - 2), in[i]);
-      }
-      r.switch_pending = false; r.switch_votes = 0;
+  if (!r.in_game)
+    for (int s = 0; s < n; ++s)
+      if (r.ring[s] == kNone && !r.line.empty()) { r.ring[s] = pop_front(r); r.tenure[s] = 0; }
+  if (doubles(r) && fighters(r) < 4 && !r.in_game) {
+    if (r.ffa_allowed && fighters(r) >= kFfaMin) {
+      r.kind = Ring::Ffa;
+      compact_ring(r);
+      clear_switch(r);
       clear_choices(r);
       r.streak_id = kNone; r.streak = 0;
+    } else {
+      shrink_to_singles(r);
     }
+  } else if (ffa(r) && !r.in_game) {
+    compact_ring(r);
+    if (fighters(r) < kFfaMin) shrink_to_singles(r);
   }
   // Someone who asked, or was chosen to come in, and got into the ring anyway: that is settled.
   if (r.asker != kNone && ring_slot(r, r.asker) >= 0) { r.asker = kNone; r.refused = 0; }
@@ -68,7 +103,7 @@ void normalize(Room& r) {
   if (r.leaving_slot != kNone && (r.leaving_slot >= ring_size(r) || r.ring[r.leaving_slot] == kNone)) {
     r.leaving_slot = kNone; r.incoming = kNone; r.leaver_plays_winner = false;
   }
-  if (r.switch_pending && switch_voters(r).empty()) { r.switch_pending = false; r.switch_votes = 0; }
+  if (r.switch_pending && switch_voters(r).empty()) clear_switch(r);
 }
 
 bool switch_complete(const Room& r) {
@@ -80,50 +115,69 @@ bool switch_complete(const Room& r) {
 }
 
 void apply_switch(Room& r) {
+  const Ring to = r.switch_to;
   const std::vector<uint8_t> v = switch_voters(r);
-  r.switch_pending = false; r.switch_votes = 0;
+  clear_switch(r);
+  if (v.empty() || to == r.kind) return;
   clear_choices(r);
   r.play_winner_next = false;
   r.streak_id = kNone; r.streak = 0;
-  if (!r.doubles) {
+  if (to == Ring::Singles) {
+    shrink_to_singles(r);
+  } else if (to == Ring::Doubles) {
     if (v.size() != 4) return;
-    // The two fighters lead the teams; the next two join them in order.
+    // The first two fighters lead the teams; the next two join them in order.
     for (uint8_t id : v) remove_from_line(r, id);
     r.ring[0] = v[0]; r.ring[1] = v[2]; r.ring[2] = v[1]; r.ring[3] = v[3];
-    r.doubles = true;
+    r.kind = Ring::Doubles;
   } else {
-    // One player from each team stays; their partners go to the front of the line.
-    const uint8_t a2 = r.ring[1], b2 = r.ring[3];
-    r.ring[1] = r.ring[2];
-    r.ring[2] = r.ring[3] = kNone;
-    r.line.insert(r.line.begin(), b2);
-    r.line.insert(r.line.begin(), a2);
-    r.doubles = false;
+    if (v.size() < (size_t)kFfaMin || v.size() > (size_t)kRingMax) return;
+    for (uint8_t id : v) remove_from_line(r, id);
+    for (int s = 0; s < kRingMax; ++s) r.ring[s] = s < (int)v.size() ? v[s] : kNone;
+    r.kind = Ring::Ffa;
   }
-  for (uint16_t& t : r.tenure) t = 0;
+  reset_tenure(r);
 }
 
 // The losers of `winner_team` go out and the front of the line comes in, one slot at a time; a slot
-// stays when nobody is waiting.
+// stays when nobody is waiting. Only members waiting before the game ended come in: a loser who just
+// went to the back of the line never takes another loser's slot.
 void rotate_losers(Room& r, uint8_t winner_team) {
   const int n = ring_size(r);
-  for (int s = 0; s < n; ++s) {
-    if (team_of_slot(r, s) == (int)winner_team || r.line.empty()) continue;
+  size_t waiting = r.line.size();
+  for (int s = 0; s < n && waiting > 0; ++s) {
+    if (r.ring[s] == kNone || team_of_slot(r, s) == (int)winner_team) continue;
     const uint8_t in = pop_front(r);
+    --waiting;
     r.line.push_back(r.ring[s]);
     r.ring[s] = in;
     r.tenure[s] = 0;
   }
 }
 
-// Take turns: whoever has been in longest steps out (a team in doubles); in a tie, the losers.
+// Take turns: whoever has been in longest steps out (a team in doubles); in a tie, the losers. In a
+// free-for-all one fighter steps out for the front of the line: the longest in, in a tie a loser (the
+// winner last), in a tie still the lower slot.
 void rotate_longest(Room& r, uint8_t winner_team) {
-  const int teams = 2;
+  if (ffa(r)) {
+    if (r.line.empty()) return;
+    int out = -1;
+    for (int s = 0; s < ring_size(r); ++s) {
+      if (r.ring[s] == kNone) continue;
+      if (out < 0 || r.tenure[s] > r.tenure[out] || (r.tenure[s] == r.tenure[out] && out == (int)winner_team && s != (int)winner_team))
+        out = s;
+    }
+    if (out < 0) return;
+    const uint8_t in = pop_front(r);
+    r.line.push_back(r.ring[out]);
+    r.ring[out] = in;
+    r.tenure[out] = 0;
+    return;
+  }
   uint16_t longest[2] = {0, 0};
   for (int s = 0; s < ring_size(r); ++s)
     longest[team_of_slot(r, s)] = std::max(longest[team_of_slot(r, s)], r.tenure[s]);
-  int out = longest[0] > longest[1] ? 0 : longest[1] > longest[0] ? 1 : (winner_team == 0 ? 1 : 0);
-  (void)teams;
+  const int out = longest[0] > longest[1] ? 0 : longest[1] > longest[0] ? 1 : (winner_team == 0 ? 1 : 0);
   rotate_losers(r, (uint8_t)(out == 0 ? 1 : 0));   // "the winner" here is the team that stays
 }
 
@@ -165,6 +219,14 @@ struct Reader {
 }  // namespace
 
 // ---------------------------------------------------------------- reading
+const char* ring_name(Ring kind) {
+  switch (kind) {
+    case Ring::Doubles: return "Doubles";
+    case Ring::Ffa: return "Free-for-all";
+    default: return "Singles";
+  }
+}
+
 bool set_character(Room& r, uint8_t id, uint8_t character, uint8_t costume) {
   if (character != kNone && character >= 33) return false;   // the external ids (a mod disc has a few more)
   if (costume > 15) return false;
@@ -183,13 +245,23 @@ const Member* find(const Room& r, uint8_t id) {
   for (const Member& m : r.members) if (m.id == id) return &m;
   return nullptr;
 }
-int ring_size(const Room& r) { return r.doubles ? 4 : 2; }
+int ring_size(const Room& r) { return r.kind == Ring::Singles ? 2 : kRingMax; }
+int fighters(const Room& r) {
+  int n = 0;
+  for (int s = 0; s < ring_size(r); ++s) if (r.ring[s] != kNone) ++n;
+  return n;
+}
+bool ring_ready(const Room& r) {
+  const int n = fighters(r);
+  if (ffa(r)) return n >= kFfaMin && (n == kRingMax || r.line.empty());
+  return n == ring_size(r);
+}
 int ring_slot(const Room& r, uint8_t id) {
   if (id == kNone) return -1;
   for (int s = 0; s < ring_size(r); ++s) if (r.ring[s] == id) return s;
   return -1;
 }
-int team_of_slot(const Room& r, int slot) { return r.doubles ? slot / 2 : slot; }
+int team_of_slot(const Room& r, int slot) { return doubles(r) ? slot / 2 : slot; }
 int line_place(const Room& r, uint8_t id) {
   for (size_t i = 0; i < r.line.size(); ++i) if (r.line[i] == id) return (int)i;
   return -1;
@@ -210,22 +282,42 @@ uint8_t next_up(const Room& r) {
   if (r.asker != kNone) return r.asker;
   return r.line.empty() ? kNone : r.line.front();
 }
-std::vector<uint8_t> switch_voters(const Room& r) {
-  std::vector<uint8_t> v;
-  if (r.doubles) {
-    for (int s = 0; s < 4; ++s) if (r.ring[s] != kNone) v.push_back(r.ring[s]);
-    return v.size() == 4 ? v : std::vector<uint8_t>{};
+
+bool switch_offered(const Room& r, Ring kind, std::string* why) {
+  const auto no = [&](const char* reason) { if (why) *why = reason; return false; };
+  if ((uint8_t)kind >= kRingKinds) return no("");
+  if (kind == r.kind) return no("");
+  if (kind == Ring::Doubles && r.members.size() < 4) return no("Doubles needs 4 people");
+  if (kind == Ring::Ffa) {
+    if (r.members.size() < (size_t)kFfaMin) return no("Free-for-all needs 3 people");
+    if (!r.ffa_allowed) return no("Everyone needs the latest Melee Unlocked");
   }
-  for (int s = 0; s < 2; ++s) if (r.ring[s] != kNone) v.push_back(r.ring[s]);
-  if (v.size() != 2) return {};
-  for (uint8_t id : r.line) if (v.size() < 4) v.push_back(id);
+  if (switch_voters(r, kind).empty()) return no(kind == Ring::Doubles ? "Doubles needs 4 people" : "Free-for-all needs 3 people");
+  if (why) why->clear();
+  return true;
+}
+
+std::vector<uint8_t> switch_voters(const Room& r, Ring kind) {
+  std::vector<uint8_t> v;
+  if ((uint8_t)kind >= kRingKinds || kind == r.kind) return v;
+  if (kind == Ring::Ffa && !r.ffa_allowed) return v;
+  for (int s = 0; s < ring_size(r); ++s) if (r.ring[s] != kNone) v.push_back(r.ring[s]);
+  if (kind == Ring::Singles) return v.size() >= 2 ? v : std::vector<uint8_t>{};
+  const size_t want = kind == Ring::Doubles ? 4 : (size_t)kRingMax, least = kind == Ring::Doubles ? 4 : (size_t)kFfaMin;
+  // The fighters, then the line, up to the new ring's size; someone just watching only when the ring
+  // would be short without them.
+  for (uint8_t id : r.line) if (v.size() < want) v.push_back(id);
   for (const Member& m : r.members)
-    if (v.size() < 4 && std::find(v.begin(), v.end(), m.id) == v.end()) v.push_back(m.id);
-  return v.size() == 4 ? v : std::vector<uint8_t>{};
+    if (v.size() < least && std::find(v.begin(), v.end(), m.id) == v.end()) v.push_back(m.id);
+  return v.size() >= least ? v : std::vector<uint8_t>{};
+}
+std::vector<uint8_t> switch_voters(const Room& r) {
+  return r.switch_pending ? switch_voters(r, r.switch_to) : std::vector<uint8_t>{};
 }
 
 bool valid(const Room& r) {
-  if (r.members.size() > (size_t)kMaxMembers || (uint8_t)r.mode > 2) return false;
+  if (r.members.size() > (size_t)kMaxMembers || (uint8_t)r.mode > 2 || (uint8_t)r.kind >= kRingKinds || (uint8_t)r.switch_to >= kRingKinds)
+    return false;
   uint32_t seen = 0;
   for (size_t i = 0; i < r.members.size(); ++i) {
     const Member& m = r.members[i];
@@ -246,9 +338,12 @@ bool valid(const Room& r) {
     if (s >= n || !place(r.ring[s])) return false;
   }
   for (uint8_t id : r.line) if (!place(id)) return false;
-  if (r.doubles) {
+  if (doubles(r)) {
     if (r.members.size() < 4) return false;
     for (int s = 0; s < 4; ++s) if (r.ring[s] == kNone) return false;
+  }
+  if (ffa(r)) {
+    if (!r.ffa_allowed || r.members.size() < (size_t)kFfaMin || fighters(r) < kFfaMin) return false;
   }
   auto member_or_none = [&](uint8_t id) { return id == kNone || (id < kMaxMembers && (seen & (1u << id))); };
   if (!member_or_none(r.asker) || !member_or_none(r.incoming) || !member_or_none(r.streak_id) || !member_or_none(r.declined))
@@ -259,6 +354,7 @@ bool valid(const Room& r) {
   if (r.leaving_slot != kNone && (r.leaving_slot >= n || r.ring[r.leaving_slot] == kNone)) return false;
   if (r.switch_votes & ~seen) return false;
   if (!r.switch_pending && r.switch_votes) return false;
+  if (r.switch_pending && (r.switch_to == r.kind || (r.switch_to == Ring::Ffa && !r.ffa_allowed))) return false;
   return true;
 }
 
@@ -290,7 +386,7 @@ bool leave(Room& r, uint8_t id) {
   if (r.declined == id) r.declined = kNone;
   if (r.streak_id == id) { r.streak_id = kNone; r.streak = 0; }
   r.switch_votes &= (uint16_t)~(1u << id);
-  if (r.switch_pending) { r.switch_pending = false; r.switch_votes = 0; }   // the people voting changed
+  if (r.switch_pending) clear_switch(r);   // the people voting changed
   if (r.members.empty()) { r = Room{r.rev}; r.mode = Mode::WinnerStays; }
   normalize(r);
   bump(r);
@@ -300,6 +396,18 @@ bool leave(Room& r, uint8_t id) {
 bool set_mode(Room& r, Mode mode) {
   if ((uint8_t)mode > 2 || r.mode == mode) return false;
   r.mode = mode;
+  bump(r);
+  return true;
+}
+
+bool set_ffa_allowed(Room& r, bool allowed) {
+  if (r.ffa_allowed == allowed) return false;
+  r.ffa_allowed = allowed;
+  if (!allowed) {
+    if (r.switch_pending && r.switch_to == Ring::Ffa) clear_switch(r);
+    if (ffa(r) && !r.in_game) shrink_to_singles(r);
+    normalize(r);
+  }
   bump(r);
   return true;
 }
@@ -370,15 +478,21 @@ bool give_up(Room& r, uint8_t fighter, bool play_winner) {
   return true;
 }
 
-bool propose_switch(Room& r, uint8_t id) {
+bool propose_switch(Room& r, uint8_t id, Ring kind) {
   if (!find(r, id) || r.switch_pending) return false;
-  const std::vector<uint8_t> voters = switch_voters(r);
+  if (!switch_offered(r, kind)) return false;
+  const std::vector<uint8_t> voters = switch_voters(r, kind);
   if (voters.empty()) return false;
   r.switch_pending = true;
+  r.switch_to = kind;
   r.switch_votes = std::find(voters.begin(), voters.end(), id) != voters.end() ? (uint16_t)(1u << id) : 0;
-  if (switch_complete(r) && !r.in_game) apply_switch(r);
+  if (switch_complete(r) && !r.in_game) { apply_switch(r); normalize(r); }
   bump(r);
   return true;
+}
+
+bool propose_switch(Room& r, uint8_t id) {
+  return propose_switch(r, id, doubles(r) ? Ring::Singles : Ring::Doubles);
 }
 
 bool vote_switch(Room& r, uint8_t id, bool yes) {
@@ -386,11 +500,11 @@ bool vote_switch(Room& r, uint8_t id, bool yes) {
   const std::vector<uint8_t> voters = switch_voters(r);
   if (std::find(voters.begin(), voters.end(), id) == voters.end()) return false;
   if (!yes) {
-    r.switch_pending = false; r.switch_votes = 0;
+    clear_switch(r);
   } else {
     if (r.switch_votes & (1u << id)) return false;
     r.switch_votes |= (uint16_t)(1u << id);
-    if (switch_complete(r) && !r.in_game) apply_switch(r);
+    if (switch_complete(r) && !r.in_game) { apply_switch(r); normalize(r); }
   }
   bump(r);
   return true;
@@ -398,7 +512,7 @@ bool vote_switch(Room& r, uint8_t id, bool yes) {
 
 bool game_start(Room& r) {
   if (r.in_game) return false;
-  for (int s = 0; s < ring_size(r); ++s) if (r.ring[s] == kNone) return false;
+  if (!ring_ready(r)) return false;
   r.in_game = true;
   bump(r);
   return true;
@@ -406,7 +520,10 @@ bool game_start(Room& r) {
 
 bool game_end(Room& r, uint8_t winner_team) {
   if (!r.in_game) return false;
-  if (winner_team != kNone && winner_team > 1) return false;
+  if (winner_team != kNone) {
+    if (doubles(r)) { if (winner_team > 1) return false; }
+    else if (winner_team >= (uint8_t)ring_size(r) || r.ring[winner_team] == kNone) return false;
+  }
   r.in_game = false;
   r.declined = kNone;
   if (switch_complete(r)) {   // everyone agreed during the game
@@ -422,15 +539,16 @@ bool game_end(Room& r, uint8_t winner_team) {
     bump(r);
     return true;
   }
-  if (winner_team == kNone) { bump(r); return true; }   // no contest: the lineup stays as it was
+  if (winner_team == kNone) { normalize(r); bump(r); return true; }   // no contest: the lineup stays as it was
   ++r.games;
   const int n = ring_size(r);
   for (int s = 0; s < n; ++s) {
+    if (r.ring[s] == kNone) continue;
     Member* m = const_cast<Member*>(find(r, r.ring[s]));
     if (m) (team_of_slot(r, s) == winner_team ? m->wins : m->losses)++;
     ++r.tenure[s];
   }
-  const uint8_t leader = r.ring[r.doubles ? winner_team * 2 : winner_team];
+  const uint8_t leader = r.ring[doubles(r) ? winner_team * 2 : winner_team];
   if (r.streak_id == leader) ++r.streak; else { r.streak_id = leader; r.streak = 1; }
 
   if (r.leaving_slot != kNone) {
@@ -452,13 +570,15 @@ bool game_end(Room& r, uint8_t winner_team) {
 }
 
 // ---------------------------------------------------------------- wire form
-std::vector<uint8_t> encode(const Room& r) {
+std::vector<uint8_t> encode(const Room& r, uint8_t version) {
+  const bool legacy = version <= kWireLegacy;
   std::vector<uint8_t> o;
-  o.push_back(kWireVersion);
+  o.push_back(legacy ? kWireLegacy : kWireVersion);
   put32(o, r.rev);
   o.push_back((uint8_t)r.mode);
-  o.push_back((uint8_t)((r.doubles ? 1 : 0) | (r.in_game ? 2 : 0) | (r.leaver_plays_winner ? 4 : 0) |
-                        (r.switch_pending ? 8 : 0) | (r.play_winner_next ? 16 : 0)));
+  o.push_back((uint8_t)((doubles(r) ? 1 : 0) | (r.in_game ? 2 : 0) | (r.leaver_plays_winner ? 4 : 0) |
+                        (r.switch_pending ? 8 : 0) | (r.play_winner_next ? 16 : 0) | (!legacy && r.ffa_allowed ? 32 : 0)));
+  if (!legacy) { o.push_back((uint8_t)r.kind); o.push_back((uint8_t)r.switch_to); }
   put32(o, r.games);
   for (int s = 0; s < kRingMax; ++s) { o.push_back(r.ring[s]); put16(o, r.tenure[s]); }
   o.push_back(r.streak_id); put16(o, r.streak);
@@ -478,14 +598,26 @@ std::vector<uint8_t> encode(const Room& r) {
 bool decode(const uint8_t* data, size_t size, Room& out) {
   if (!data) return false;
   Reader in{data, size};
-  if (in.u8() != kWireVersion) return false;
+  const uint8_t version = in.u8();
+  if (version != kWireLegacy && version != kWireVersion) return false;
+  const bool legacy = version == kWireLegacy;
   Room r;
   r.rev = in.u32();
   r.mode = (Mode)in.u8();
   const uint8_t flags = in.u8();
-  if (flags >> 5) return false;
-  r.doubles = flags & 1; r.in_game = flags & 2; r.leaver_plays_winner = flags & 4;
+  if (flags >> (legacy ? 5 : 6)) return false;
+  r.in_game = flags & 2; r.leaver_plays_winner = flags & 4;
   r.switch_pending = flags & 8; r.play_winner_next = flags & 16;
+  if (legacy) {
+    r.kind = (flags & 1) ? Ring::Doubles : Ring::Singles;
+    r.switch_to = r.switch_pending ? (doubles(r) ? Ring::Singles : Ring::Doubles) : Ring::Singles;
+    r.ffa_allowed = false;
+  } else {
+    r.ffa_allowed = flags & 32;
+    r.kind = (Ring)in.u8();
+    r.switch_to = (Ring)in.u8();
+    if (((flags & 1) != 0) != (r.kind == Ring::Doubles)) return false;
+  }
   r.games = in.u32();
   for (int s = 0; s < kRingMax; ++s) { r.ring[s] = in.u8(); r.tenure[s] = in.u16(); }
   r.streak_id = in.u8(); r.streak = in.u16();

@@ -40,10 +40,10 @@ def bot_script(index, hand=False):
     hand_steps = ["400 sx=-127", "560", "600 sy=-127", "606", "640 sy=-127", "646",
                   "700 A", "706", "900 B", "906"] if hand else []
     return "\n".join([
-        "# The online menu opens on YouGame's page: Z turns to Slippi's page (Direct, Unranked, Teams,",
-        "# Party) with the cursor on Unranked, one row up is Direct. On the Direct CSS (scene 8) move onto",
-        "# a character and pick it. No Start: the room starts the search and locks the pick in.",
-        "300 Z", "306", "400 sy=80", "408", "480 A", "490",
+        "# The online menu opens on Slippi's page (YouGame's rows are closed here and the test room's Slippi",
+        "# side is signed in) with the cursor on Unranked; one row up is Direct. On the Direct CSS (scene 8)",
+        "# move onto a character and pick it. No Start: the room starts the search and locks the pick in.",
+        "400 sy=80", "408", "480 A", "490",
         "@scene 8", "60 sx=61 sy=127", "77", "100 A", "110", *hand_steps,
         "@match", "@loop 240", "0", f"{run_from} sx=-127", "238", ""])
 
@@ -149,7 +149,18 @@ def main():
     ap.add_argument("--extra", nargs=argparse.REMAINDER, default=[])
     ap.add_argument("--press-start", action="store_true",
                     help="the room does not lock fighters in: each member presses Start on the select itself (MELEE_TEST_ARENA_PRESS_START)")
+    ap.add_argument("--ffa", action="store_true", help="the host proposes a free-for-all before the first game (everyone says yes)")
+    ap.add_argument("--doubles", action="store_true", help="the host proposes doubles before the first game")
+    ap.add_argument("--watch", default="", help="members who just watch, e.g. 3 or 2,3 (test plan watch steps)")
     args = ap.parse_args()
+    # The host's test plan (MELEE_ARENA_TEST_PLAN): the options above, before anything the environment names.
+    plan = [f"watch:0:{m.strip()}" for m in args.watch.split(",") if m.strip()]
+    if args.ffa:
+        plan.append("ffa:0")
+    if args.doubles:
+        plan.append("doubles:0")
+    if plan:
+        os.environ["MELEE_ARENA_TEST_PLAN"] = ",".join(plan + [x for x in os.environ.get("MELEE_ARENA_TEST_PLAN", "").split(",") if x])
     iso = require_iso(args.iso)
     exe = (args.bin / "melee_source.exe").resolve()
     if not exe.is_file():
@@ -243,7 +254,7 @@ def check(args, out):
     if len(ended) < args.min_games:
         problems.append(f"only {len(ended)} games ended (wanted {args.min_games})")
     def ring_of(e):
-        m = re.search(r"ring (\d+) (\d+)(?: vs (\d+) (\d+))?", e or "")
+        m = re.search(r"ring (\d+) (\d+)(?: (?:vs )?(\d+) (\d+))?", e or "")
         return {int(x) for x in m.groups() if x is not None} - {255} if m else set()
     fought = set()
     for e in revs:
@@ -256,6 +267,15 @@ def check(args, out):
         if m:
             ids[m.group(1)] = int(m.group(2))
     plan = os.environ.get("MELEE_ARENA_TEST_PLAN", "")
+    ffa_games = [e for e in host if e.startswith("room rev") and "free-for-all" in e]
+    if "ffa" in plan:
+        print(f"free-for-all rooms: {len(ffa_games)}")
+        if not ffa_games:
+            problems.append("the room never became a free-for-all")
+        # Every game of a free-for-all has three or four fighters and a winner (the result byte).
+        for e in ended:
+            if "the winner never reported" in e:
+                problems.append(f"a free-for-all ended with no winner report: {e}")
     if "mode:" not in plan and "doubles" not in plan:
         for k, e in enumerate(host):
             m = re.match(r"game [0-9A-F]{8} ended, winner (ARENA#\d+)", e)
@@ -266,7 +286,8 @@ def check(args, out):
             winner = ids.get(m.group(1))
             if ring and winner is not None and winner not in ring:
                 problems.append(f"winner {m.group(1)} left the ring under Winner stays: {after}")
-    if len(ended) >= args.players and len(fought) < args.players:
+    watching = {int(m) for m in args.watch.split(",") if m.strip()}   # just watching: never in the ring
+    if len(ended) >= args.players and len(fought | watching) < args.players:
         problems.append(f"only members {sorted(fought)} ever fought")
     for i, lg in enumerate(logs):
         if lg["crash"]:
@@ -375,7 +396,8 @@ def check(args, out):
         print(f"    m{args.hand_test} hand: " + "; ".join(steps))
         if not any("went into the left panel" in l for l in steps):
             problems.append(f"m{args.hand_test}: the hand never went into the panel")
-    watchers = args.players > 2   # two members both fight every game: nobody watches
+    ring = 4 if (args.ffa or args.doubles) else 2
+    watchers = args.players > ring or bool(args.watch)   # everyone fights every game: nobody watches
     if watchers and viewed == 0 and lived == 0:
         problems.append("no viewer or live recording to compare")
     if watchers and not args.no_viewer and viewed == 0:
