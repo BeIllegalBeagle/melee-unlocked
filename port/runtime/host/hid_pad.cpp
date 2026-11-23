@@ -230,6 +230,10 @@ int8_t hid_stick_value(long logical_min, long logical_max, int bits, unsigned lo
     return hid_axis_signed(-half, half - 1, s, flip);
   }
   if (encoding == kStickOffset) return hid_axis_signed(0, (half << 1) - 1, (long)u, flip);   // centred mid-field
+  // As declared. A field declared with a signed range holds a signed number: Windows hands its bits over
+  // unsigned, so a negative reading (left, down) came out as a large positive one, and both directions of
+  // the stick read as the same one (a B0XX r2 in DInput, 11-22: "left and right both = right").
+  if (logical_min < 0) return hid_axis_signed(logical_min, logical_max, u >= (unsigned long)half ? (long)u - (half << 1) : (long)u, flip);
   return hid_axis_signed(logical_min, logical_max, (long)u, flip);
 }
 
@@ -343,6 +347,9 @@ bool hidpad_raw_input(void* device_handle, const uint8_t* report, uint32_t size,
       return false;
     out = (LONG)raw;
     s.raw[i] = (int32_t)raw;
+    // A field declared with a signed range: its bits as the signed number they are (see hid_stick_value).
+    if (s.axes[i].logical_min < 0 && s.axes[i].bits >= 2 && s.axes[i].bits <= 31 && (raw >> (s.axes[i].bits - 1)) & 1u)
+      out = (LONG)((long long)(raw & ((1ull << s.axes[i].bits) - 1)) - (1ll << s.axes[i].bits));
     return true;
   };
 
@@ -411,8 +418,7 @@ bool hidpad_raw_input(void* device_handle, const uint8_t* report, uint32_t size,
     // Two's-complement data in a field declared unsigned (a B0XX r2 on firmware v3) is the GameCube's own
     // signed reading, up positive (its raw values: up +20688, down -20432): not flipped as HID's Y is.
     if (s.stick_enc[i] == kStickTwos && ax.logical_min >= 0) flip = false;
-    return s.stick_enc[i] == kStickDeclared ? to_signed(ax, value, flip)
-                                            : hid_stick_value(ax.logical_min, ax.logical_max, ax.bits, (unsigned long)value, s.stick_enc[i], flip);
+    return hid_stick_value(ax.logical_min, ax.logical_max, ax.bits, (unsigned long)value, s.stick_enc[i] < 0 ? kStickDeclared : s.stick_enc[i], flip);
   };
   if (read_axis(used[0], value)) pad.stick_x = stick(used[0], false);
   if (read_axis(used[1], value)) pad.stick_y = stick(used[1], true);
