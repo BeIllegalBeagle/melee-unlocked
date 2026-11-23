@@ -226,6 +226,17 @@ int8_t hid_stick_value(long logical_min, long logical_max, int bits, unsigned lo
   if (bits < 2 || bits > 31) bits = 16;
   const unsigned long mask = (1ul << bits) - 1, u = raw & mask;
   const long half = 1l << (bits - 1);
+  // A signed field that spans its whole width carries the GameCube byte in its top eight bits (a B0XX in
+  // DInput: +20688 up, -20432 down, 0 at rest): that byte, exactly. Scaling from the middle of the range put
+  // rest half a step below zero, which the flipped axis rounded down to -1: a stick at rest read 0.0125
+  // (player report 11-22).
+  if (bits >= 8 && (encoding == kStickTwos ? logical_min >= 0 || (logical_min == -half && logical_max == half - 1)
+                                           : encoding == kStickDeclared && logical_min == -half && logical_max == half - 1)) {
+    const long s = u >= (unsigned long)half ? (long)u - (half << 1) : (long)u;
+    long v = s >= 0 ? s >> (bits - 8) : -((-s + (1l << (bits - 8)) - 1) >> (bits - 8));   // floor, whatever >> does to a negative
+    if (flip) v = -v;
+    return (int8_t)std::clamp(v, -128l, 127l);
+  }
   if (encoding == kStickTwos) {
     // The field's bits as a signed number, scaled across the declared range (or the field's own when the
     // declared range is unsigned).

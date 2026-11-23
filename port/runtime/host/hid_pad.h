@@ -143,13 +143,13 @@ HidPadAxes hidpad_axes(int slot);
 // resting stick's jitter is far below that), or -1. The hat (index 7) is never an answer.
 constexpr int kHidAxisMoved = 32;
 inline int hid_moved_axis(const int8_t base[8], const int8_t now[8], unsigned present) {
-  int best = -1, far = 0;
+  int best = -1, most = 0;   // not "far": windows.h defines that away
   for (int i = 0; i < 7; ++i) {
     if (!((present >> i) & 1u)) continue;
     const int d = (int)now[i] - (int)base[i], a = d < 0 ? -d : d;
-    if (a > far) { far = a; best = i; }
+    if (a > most) { most = a; best = i; }
   }
-  return far >= kHidAxisMoved ? best : -1;
+  return most >= kHidAxisMoved ? best : -1;
 }
 // Which axis a role reads: the player's choice when that axis exists, otherwise the reader's own
 // (`automatic`, -1 for none) unless the player gave that axis to another role.

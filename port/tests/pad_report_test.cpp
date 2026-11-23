@@ -733,7 +733,25 @@ static void check_axis_roles() {
   CHECK(hid_role_axis(roles, HID_ROLE_TRIGGER_L, -1, 0x3F) == -1);
 }
 
+// A signed 16-bit field carries the GameCube byte in its top bits: rest is exactly 0 either way up.
+static void check_signed_field_byte() {
+  using namespace host;
+  for (const bool flip : {false, true}) {
+    CHECK(hid_stick_value(-32768, 32767, 16, 0, kStickDeclared, flip) == 0);
+    CHECK(hid_stick_value(-32768, 32767, 16, 127, kStickDeclared, flip) == 0);
+  }
+  CHECK(hid_stick_value(-32768, 32767, 16, 20688, kStickDeclared) == 80);
+  CHECK(hid_stick_value(-32768, 32767, 16, (unsigned long)(65536 - 20432), kStickDeclared) == -80);
+  CHECK(hid_stick_value(-32768, 32767, 16, 20688, kStickDeclared, true) == -80);
+  CHECK(hid_stick_value(-32768, 32767, 16, (unsigned long)(65536 - 20432), kStickDeclared, true) == 80);
+  CHECK(hid_stick_value(0, 65535, 16, 20688, kStickTwos) == 80);                       // the same data in a field declared unsigned
+  CHECK(hid_stick_value(0, 65535, 16, (unsigned long)(65536 - 20432), kStickTwos) == -80);
+  CHECK(hid_stick_value(-128, 127, 8, 0x80, kStickDeclared) == -128);
+  CHECK(hid_stick_value(-128, 127, 8, 0x80, kStickDeclared, true) == 127);
+}
+
 int main() {
+  check_signed_field_byte();
   check_axis_roles();
   check_stick_encodings();
   check_frame1_dinput_axes();
