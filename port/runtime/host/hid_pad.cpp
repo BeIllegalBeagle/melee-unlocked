@@ -285,6 +285,11 @@ void hidpad_device_removed(void* device_handle) {
 bool hidpad_raw_input(void* device_handle, const uint8_t* report, uint32_t size, uint32_t count) {
   HANDLE device = (HANDLE)device_handle;
   if (!report || !size || !count) return false;
+  // Raw Input packs the reports that arrived since the window last read into one message, oldest first:
+  // the newest is the pad's state now. Reading the first one dropped the rest, so the last change before
+  // the pad went quiet was lost until its next report: b0xx-ahk writes each vJoy axis on its own, and a
+  // released C-stick stayed up or down "until I press another button" (TutukaSSBM, 1.0.0 to 1.0.8).
+  report += (size_t)(count - 1) * size;
 
   RID_DEVICE_INFO info{}; info.cbSize = sizeof info;
   UINT info_size = sizeof info;
