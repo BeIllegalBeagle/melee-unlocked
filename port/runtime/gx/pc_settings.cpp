@@ -2760,7 +2760,18 @@ void load_pc_settings(RenderOptions& options, int& volume) {
         if (us != std::string::npos) {
           int idx = std::stoi(key.substr(3, us - 3));
           std::string action = key.substr(us + 1);
-          if (idx >= 0 && idx < 4)
+          // The invert switches were written as "hid<n>_invert" and only ever read back as "pad<n>_invert":
+          // they came back off after every restart.
+          if (idx >= 0 && idx < 4 && action == "invert") host::g_hid_stick_invert[idx] = (uint8_t)(std::stoi(value) & 15);
+          else if (idx >= 0 && idx < 4 && action == "axes") {
+            std::istringstream list(value);
+            for (int r = 0; r < host::HID_ROLE_COUNT; ++r) {
+              int axis = -1;
+              if (!(list >> axis)) break;
+              host::g_hid_axis_role[idx][r] = axis >= 0 && axis < 7 ? (uint8_t)axis : host::kHidAxisAuto;
+            }
+          }
+          else if (idx >= 0 && idx < 4)
             for (int i = 0; i < (int)host::BindAction::Count; ++i)
               if (action == kActionNames[i]) host::g_hid_bindings[idx].mask[i] = (uint32_t)std::stoul(value);
         }
@@ -5377,6 +5388,13 @@ static bool write_settings_file_impl(const SettingsState& state, const RenderOpt
       file << "\nhid" << idx << "_" << kActionNames[i] << " " << host::g_hid_bindings[idx].mask[i];
   for (int idx = 0; idx < 4; ++idx)
     if (host::g_hid_stick_invert[idx]) file << "\nhid" << idx << "_invert " << (int)host::g_hid_stick_invert[idx];
+  for (int idx = 0; idx < 4; ++idx) {
+    bool any = false;
+    for (const uint8_t axis : host::g_hid_axis_role[idx]) any = any || axis != host::kHidAxisAuto;
+    if (!any) continue;
+    file << "\nhid" << idx << "_axes";
+    for (const uint8_t axis : host::g_hid_axis_role[idx]) file << " " << (axis == host::kHidAxisAuto ? -1 : (int)axis);
+  }
   file << binding_levels_text();
   for (int n = 0; n < 4; ++n)
     file << "\nport" << n << " " << port_source_to_combo(host::g_port_sources[n]);
@@ -11824,6 +11842,39 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
                 changed = true;
               }
             }
+          }
+          // Which axis is which, chosen by moving it: a pad's own description does not say which axis is the
+          // C-stick and which a trigger, and a trigger on an axis nothing read could not be used at all.
+          if (!host::hidpad_frame1_dinput(tab_index)) {
+            static const char* const role_names[host::HID_ROLE_COUNT] = {"Stick left/right", "Stick up/down", "C-stick left/right",
+                                                                        "C-stick up/down", "L trigger", "R trigger"};
+            static const char* const role_asks[host::HID_ROLE_COUNT] = {"Push the stick right...", "Push the stick up...",
+                                                                       "Push the C-stick right...", "Push the C-stick up...",
+                                                                       "Press L or its light shield...", "Press R or its light shield..."};
+            static int wait_role = -1, wait_slot = -1;
+            static double wait_until = 0.0;
+            if (wait_role >= 0 && (wait_slot != tab_index || ImGui::GetTime() > wait_until)) wait_role = -1;
+            if (wait_role >= 0) {
+              const int axis = host::hidpad_axis_capture_poll(tab_index);
+              if (axis >= 0) { host::hidpad_assign_axis(tab_index, wait_role, axis); wait_role = -1; changed = true; }
+            }
+            ImGui::Spacing();
+            for (int r = 0; r < host::HID_ROLE_COUNT; ++r) {
+              const uint8_t axis = host::g_hid_axis_role[tab_index][r];
+              char label[96];
+              if (r == wait_role) std::snprintf(label, sizeof label, "%s##axisrole%d", role_asks[r], r);
+              else std::snprintf(label, sizeof label, "%s: %s##axisrole%d", role_names[r],
+                                 axis == host::kHidAxisAuto ? "Automatic" : host::hidpad_axis_name(axis), r);
+              if (r % 2) ImGui::SameLine();
+              if (settings_widgets::Button(label)) {
+                if (r == wait_role) wait_role = -1;
+                else { host::hidpad_axis_capture_begin(tab_index); wait_role = r; wait_slot = tab_index; wait_until = ImGui::GetTime() + 8.0; }
+              }
+              if (ImGui::IsItemClicked(ImGuiMouseButton_Right) && axis != host::kHidAxisAuto) {
+                host::g_hid_axis_role[tab_index][r] = host::kHidAxisAuto; wait_role = -1; changed = true;
+              }
+            }
+            settings_hint("A stick or trigger that reads wrong: click it here, then move it. Right-click for Automatic.");
           }
           const host::HidPadAxes axes = host::hidpad_axes(tab_index);
           if (axes.count) {
