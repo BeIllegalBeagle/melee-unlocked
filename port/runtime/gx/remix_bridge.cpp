@@ -166,6 +166,9 @@ struct RemixBridge::Impl {
   int shown = -1;                    // the window's visibility as show() last set it (-1 not yet)
   int place_x = -1, place_y = -1;    // where place() last put that window
   int want_w = 0, want_h = 0, want_frames = 0;   // a new picture size, held a few frames before the device is reset
+  // Whether Remix has ray traced a frame (its normals hold a surface), checked every 30 scene frames until it has.
+  bool tracing = false;
+  uint32_t tracing_checks = 0;
   // This frame's bright effects (additive, carried by the layer) as lights.
   std::vector<FxLight> fx_lights;
   FxLightCollector fx;
@@ -462,7 +465,16 @@ void RemixBridge::frame(const Frame& f, int camera, const float vw[12], const st
     // MELEE_REMIX_PAINTED: the share of unlit stage art's brightness that it emits; the rest comes from
     // Remix's own lights on its texture, so it takes shadows and highlights. 1 = the 0.9.111 look.
     static const float painted = [] { const char* v = std::getenv("MELEE_REMIX_PAINTED"); return v ? (float)std::atof(v) : 1.0f; }();
-    const float emissive = additive ? 2.0f * emissive_scale : unlit && d.owner_player >= 6 ? emissive_scale * painted
+    // Painted backdrops (unlit stage art that writes no depth: Yoshi's Story's sky) sit far behind the
+    // stage where Remix's sun adds little, so at the stage art's glow (1.3) they showed at about 0.6 of
+    // the game's brightness, a dull grey-blue sky without its streaks. At 6 they measure 0.85 to 1.0 of
+    // the game, as the stage in front does (11-23, Yoshi's Story). MELEE_REMIX_BACKDROP_GLOW, 0 = as before.
+    // (Tried: also far depth-writing art, for Final Destination's nebula; it caught Yoshi's Story's
+    // trees and washed them out, and the nebula overshot.)
+    static const float backdrop_glow = [] { const char* v = std::getenv("MELEE_REMIX_BACKDROP_GLOW"); return v ? (float)std::atof(v) : 6.0f; }();
+    const bool painted_backdrop = unlit && d.owner_player >= 6 && !additive && !((d.bp.zmode() & 1) && (d.bp.zmode() & 0x10)) &&
+                                  d.textures[0].used && backdrop_glow > 0.0f;
+    const float emissive = additive ? 2.0f * emissive_scale : painted_backdrop ? backdrop_glow : unlit && d.owner_player >= 6 ? emissive_scale * painted
                            : gx_specular && d.owner_player >= 6 ? gx_specular_glow : fighter ? fighter_glow : 0.0f;
     m.prim.clear();
     if (d.segment_count) {
@@ -978,6 +990,12 @@ void RemixBridge::frame(const Frame& f, int camera, const float vw[12], const st
   }
   if (m.d3d9_mode && m.device) {
     present_d3d9();
+    if (!m.tracing && m.frame_no % 30 == 0) {
+      m.tracing = traced_once();
+      ++m.tracing_checks;
+      if (m.tracing || m.tracing_checks == 1 || m.tracing_checks % 20 == 0)
+        host::log("remix: %s (scene frame %llu)", m.tracing ? "ray tracing" : "not ray tracing yet; the game's own picture shows", (unsigned long long)m.frame_no);
+    }
   } else {
     remixapi_PresentInfo pi{};
     pi.sType = REMIXAPI_STRUCT_TYPE_PRESENT_INFO;
@@ -1026,6 +1044,10 @@ void RemixBridge::present_d3d9() {
     // The HUD: one screen-space textured quad over the whole picture (Remix treats pre-transformed
     // draws as UI and composites them after path tracing).
     IDirect3DDevice9Ex* dev = m.device;
+    // A cleared back buffer each frame, as D3D9 games start theirs: Remix's picture replaces it. On a
+    // run where Remix never started ray tracing (11-22: a GPU hung over and over by another process),
+    // nothing replaced it and each frame's layer blended over the last into a white smear.
+    dev->Clear(0, nullptr, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, D3DCOLOR_XRGB(0, 0, 0), 1.0f, 0);
     dev->BeginScene();
     if (m.hud_new && m.hud_w > 0 && m.hud_h > 0) {
       if (m.hud_tex) {
@@ -1118,6 +1140,37 @@ void RemixBridge::set_hud(const uint8_t* bgra, int w, int h) {
   }
 }
 
+bool RemixBridge::tracing() const { return impl_->tracing || (started_ && !impl_->d3d9_mode); }
+
+// Remix's normals of its last finished frame: all empty until it has ray traced one. Once a run on a GPU
+// hung over and over by another process (11-22), Remix never started ray tracing and its window
+// showed only the layer blending over itself.
+bool RemixBridge::traced_once() {
+  Impl& m = *impl_;
+  if (std::getenv("MELEE_REMIX_TEST_NOT_TRACING")) return false;   // tests: the fallback picture
+  if (!m.device || !m.api.dxvk_CopyRenderingOutput) return true;
+  IDirect3DSurface9* rt = nullptr;
+  IDirect3DSurface9* sys = nullptr;
+  bool any = false;
+  if (SUCCEEDED(m.device->CreateRenderTarget((UINT)m.width, (UINT)m.height, D3DFMT_A8R8G8B8, D3DMULTISAMPLE_NONE, 0, FALSE, &rt, nullptr)) &&
+      SUCCEEDED(m.device->ColorFill(rt, nullptr, D3DCOLOR_ARGB(0, 0, 0, 0))) &&
+      m.api.dxvk_CopyRenderingOutput(rt, REMIXAPI_DXVK_COPY_RENDERING_OUTPUT_TYPE_NORMALS) == REMIXAPI_ERROR_CODE_SUCCESS &&
+      SUCCEEDED(m.device->CreateOffscreenPlainSurface((UINT)m.width, (UINT)m.height, D3DFMT_A8R8G8B8, D3DPOOL_SYSTEMMEM, &sys, nullptr)) &&
+      SUCCEEDED(m.device->GetRenderTargetData(rt, sys))) {
+    D3DLOCKED_RECT lr{};
+    if (SUCCEEDED(sys->LockRect(&lr, nullptr, D3DLOCK_READONLY))) {
+      for (int y = 0; y < m.height && !any; y += 7) {
+        const uint32_t* row = (const uint32_t*)((const uint8_t*)lr.pBits + (size_t)y * lr.Pitch);
+        for (int x = 0; x < m.width; x += 7) if (row[x] & 0x00FFFFFFu) { any = true; break; }
+      }
+      sys->UnlockRect();
+    }
+  }
+  if (sys) sys->Release();
+  if (rt) rt->Release();
+  return any;
+}
+
 bool RemixBridge::capture(const std::string& path) {
   // The final picture, and the layer laid over it (<path>.layer.png, premultiplied RGBA): Remix's
   // composite of that layer happens at present, after both.
@@ -1165,6 +1218,8 @@ void RemixBridge::show(bool) {}
 void RemixBridge::place(int, int, int, int) {}
 void RemixBridge::frame(const Frame&, int, const float*, const std::vector<RtxLightRecord>&, const std::vector<uint8_t>&) {}
 bool RemixBridge::capture(const std::string&) { return false; }
+bool RemixBridge::tracing() const { return false; }
+bool RemixBridge::traced_once() { return false; }
 bool RemixBridge::capture_output(const std::string&, int) { return false; }
 void RemixBridge::present_2d() {}
 void RemixBridge::present_d3d9() {}

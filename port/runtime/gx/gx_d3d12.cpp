@@ -832,6 +832,10 @@ class D3D12Backend : public Backend {
   // This frame's reflective stage floors' own textures (remix_layer_draw): every stage draw with one of
   // them goes to the layer, so a floor is all the game's or all Remix's, never strips of both.
   std::unordered_set<uint32_t> remix_floor_tex_;
+  // This frame's fighter shadow maps (EFB copies drawn only by orthographic, untextured draws): not a
+  // copy of the scene, so a draw reading one is no reflective floor or live screen.
+  std::unordered_set<uint32_t> remix_shadow_copies_;
+  bool scene_copy(uint32_t addr) const { return efb_copies_.count(addr) && !remix_shadow_copies_.count(addr); }
   uint64_t ps_cache_sequence_ = ~0ull;
   int ps_cache_scale_ = 0;
   std::vector<PSConstants> ps_cache_;
@@ -3029,7 +3033,7 @@ uint8_t D3D12Backend::remix_layer_draw(const DrawCall& dc) const {
   static const bool reflective_layer = std::getenv("MELEE_REMIX_REFLECTIVE_SCENE") == nullptr;
   for (int map = 0; map < 8; ++map) {
     const TextureRef& t = dc.textures[map];
-    if (!t.used || no_efb_layer) continue;
+    if (!t.used || no_efb_layer || remix_shadow_copies_.count(t.addr)) continue;   // a fighter's shadow map: not the scene
     const auto ec = efb_copies_.find(t.addr);
     if (ec == efb_copies_.end() || !ec->second.resource) continue;
     const bool water = remix_water && dc.owner_player == 0xFF && host::g_stage_water.load(std::memory_order_relaxed);
@@ -3078,6 +3082,8 @@ uint8_t D3D12Backend::remix_layer_draw(const DrawCall& dc) const {
         if (!dc.bp.order_enable((int)n)) continue;
         const int map = dc.bp.order_texmap((int)n), gen = dc.bp.order_texcoord((int)n);
         if (map < 0 || map >= 8 || !dc.textures[map].used) continue;
+        // A fighter's shadow map read over the stage's art is no second picture to keep.
+        if (remix_shadow_copies_.count(dc.textures[map].addr)) continue;
         if (first_map < 0) { first_map = map; first_gen = gen; continue; }
         if (map != first_map && gen != first_gen) return 1;
       }
@@ -3818,13 +3824,17 @@ void D3D12Backend::remix_present(const Frame& frame) {
     g_remix_running.store(true, std::memory_order_relaxed);
     set_rtx_status(2, "");
   }
-  // The settings panel is the game's own overlay: Remix's window steps aside while it is open.
+  // The settings panel is the game's own overlay: Remix's window steps aside while it is open. In a
+  // match it also waits until Remix has ray traced a frame (the game's own picture shows until then: a
+  // first start compiling Remix's shaders, or a Remix that never starts tracing).
   if (embed) {
     remix_->place(px, py, pw, ph);
+    const bool whole = !(in_match_ && frame.rtx.present && !frame.rtx.cameras.empty());
+    const bool ready = whole || remix_->tracing();
 #ifdef GX_PC_SETTINGS
-    remix_->show(!(settings_ui_ && settings_ui_->overlay_visible()));   // F1 panel, Esc menu, Practice menu on top
+    remix_->show(ready && !(settings_ui_ && settings_ui_->overlay_visible()));   // F1 panel, Esc menu, Practice menu on top
 #else
-    remix_->show(true);
+    remix_->show(ready);
 #endif
   } else {
     static bool shown = false;
@@ -5576,13 +5586,34 @@ void D3D12Backend::submit_frame(const Frame& frame, const DrawMatrices* override
   FlashLog flash_log{flash_fill, flash_since, flash_presented};
   set_presented_test_fill(flash_mode == 1 ? flash_fill : frame.test_fill);
   remix_floor_tex_.clear();
+  remix_shadow_copies_.clear();
   if (remix_layer_) {
+    // The fighters' shadow maps: copies made only from orthographic, untextured draws (each fighter's
+    // silhouette, drawn every frame). The ground under a fighter reads them through its later textures,
+    // which made every piece of it a "reflective floor" for the rules below: Yoshi's Story's ground and
+    // platforms, Battlefield's platforms and all of Final Destination went to the layer and were missing
+    // from Remix's scene. Remix casts its own fighter shadows, so these draws are its own.
+    bool any_draw = false, shadow_like = true;
+    for (const FrameCommand& cmd : frame.commands) {
+      if (cmd.kind == FrameCommand::Draw) {
+        const DrawCall& d = frame.draws[cmd.index];
+        bool textured = false;
+        for (const TextureRef& t : d.textures) textured = textured || t.used;
+        any_draw = true;
+        if (d.xf_regs[0x26] == 0 || textured) shadow_like = false;
+        continue;
+      }
+      const EfbCopy& c = frame.copies[cmd.index];
+      if (!c.to_xfb && any_draw && shadow_like) remix_shadow_copies_.insert(c.dest_addr);
+      any_draw = false;
+      shadow_like = true;
+    }
     // A reflective stage floor (Pokemon Stadium's field, Dream Land's water) reads the game's copy of
     // the scene through a texture past its first; its first texture is the floor's own art.
     for (const DrawCall& d : frame.draws) {
       if (d.owner_player != 0xFF || !d.textures[0].used || efb_copies_.count(d.textures[0].addr)) continue;
       for (int map = 1; map < 8; ++map)
-        if (d.textures[map].used && efb_copies_.count(d.textures[map].addr)) { remix_floor_tex_.insert(d.textures[0].addr); break; }
+        if (d.textures[map].used && scene_copy(d.textures[map].addr)) { remix_floor_tex_.insert(d.textures[0].addr); break; }
     }
   }
   Stopwatch frame_sw;

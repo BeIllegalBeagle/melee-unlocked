@@ -564,8 +564,10 @@ void main(uint3 id : SV_DispatchThreadID) {
     if (shadows && ((switches & kFighterShadows) != 0u || stage_shade) && any(sun > 0.0)) {
       const float3 to_sun = cone_direction(-sun_dir, sun_radius, rng);
       // Fighters' shadows reach kBakedShadowReach; the stage's own only its near parts (eaves,
-      // platforms, ledges), not across to a far backdrop.
-      const bool by_stage = stage_shade && !visible_outside(origin, to_sun, 100.0, kCasters);
+      // platforms, ledges), not across to a far backdrop. They fall on ground (a surface facing up)
+      // only: painted art facing the camera has its shading painted in, and a sun shadow from the
+      // piece in front darkened whole shapes of it (Yoshi's Story's leaf balls, one dark disc each).
+      const bool by_stage = stage_shade && n.y > 0.5 && !visible_outside(origin, to_sun, 100.0, kCasters);
       if (dot(n, to_sun) > 0.0 && by_stage) {
         // As dark as the stage's own shade: GX's share of ambient in its light (Faithful, softened),
         // or the physical one (Remastered).
