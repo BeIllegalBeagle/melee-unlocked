@@ -703,7 +703,63 @@ static void check_stick_encodings() {
   CHECK(hid_stick_encoding(0, 255, 8, 200) == kStickDeclared);   // part-way: no other reading is centred
 }
 
+// Choosing an axis by moving it, and which axis each role then reads.
+static void check_axis_roles() {
+  using namespace host;
+  int8_t base[8] = {0, 0, -128, 0, 0, -128, 0, 0}, now[8];
+  std::memcpy(now, base, sizeof base);
+  const unsigned all = 0x7F;
+  CHECK(hid_moved_axis(base, now, all) == -1);
+  now[0] = 6; now[1] = -9;                       // a resting stick's jitter
+  CHECK(hid_moved_axis(base, now, all) == -1);
+  now[5] = -128 + 49;                            // a light shield button on the Rz trigger axis
+  CHECK(hid_moved_axis(base, now, all) == 5);
+  now[3] = 127;                                  // the furthest mover wins
+  CHECK(hid_moved_axis(base, now, all) == 3);
+  CHECK(hid_moved_axis(base, now, all & ~(1u << 3)) == 5);   // an axis the pad does not have is never chosen
+  now[7] = 100;                                  // the hat is not an axis to choose
+  now[3] = 0; now[5] = -128;
+  CHECK(hid_moved_axis(base, now, 0xFF) == -1);
+
+  uint8_t roles[6] = {kHidAxisAuto, kHidAxisAuto, kHidAxisAuto, kHidAxisAuto, kHidAxisAuto, kHidAxisAuto};
+  CHECK(hid_role_axis(roles, HID_ROLE_CSTICK_X, 3, all) == 3);        // nothing chosen: the reader's own
+  CHECK(hid_role_axis(roles, HID_ROLE_TRIGGER_L, -1, all) == -1);
+  roles[HID_ROLE_TRIGGER_L] = 2; roles[HID_ROLE_TRIGGER_R] = 5;       // triggers on Z and Rz
+  CHECK(hid_role_axis(roles, HID_ROLE_TRIGGER_L, 6, all) == 2);
+  CHECK(hid_role_axis(roles, HID_ROLE_TRIGGER_R, 2, all) == 5);
+  CHECK(hid_role_axis(roles, HID_ROLE_CSTICK_X, 2, all) == -1);       // Z was given away: not also the C-stick
+  CHECK(hid_role_axis(roles, HID_ROLE_CSTICK_X, 3, all) == 3);
+  roles[HID_ROLE_TRIGGER_L] = 6;                                      // chosen on another pad: this one has no slider
+  CHECK(hid_role_axis(roles, HID_ROLE_TRIGGER_L, -1, 0x3F) == -1);
+}
+
+// A signed 16-bit field carries the GameCube byte in its top bits: rest is exactly 0 either way up.
+static void check_signed_field_byte() {
+  using namespace host;
+  for (const bool flip : {false, true}) {
+    CHECK(hid_stick_value(-32768, 32767, 16, 0, kStickDeclared, flip) == 0);
+    CHECK(hid_stick_value(-32768, 32767, 16, 127, kStickDeclared, flip) == 0);
+  }
+  // Declared -32767..32767, resting on 127 (a B0XX, 11-23): scaled from the middle it read 0 on X and, flipped, -1 on Y.
+  for (const bool flip : {false, true}) {
+    CHECK(hid_stick_value(-32767, 32767, 16, 127, kStickDeclared, flip) == 0);
+    CHECK(hid_stick_value(-32767, 32767, 16, 48, kStickDeclared, flip) == 0);
+  }
+  CHECK(hid_stick_value(-32767, 32767, 16, 20688, kStickDeclared, true) == -80);
+  CHECK(hid_stick_value(-32767, 32767, 16, (unsigned long)(65536 - 20432), kStickDeclared, true) == 80);
+  CHECK(hid_stick_value(-32768, 32767, 16, 20688, kStickDeclared) == 80);
+  CHECK(hid_stick_value(-32768, 32767, 16, (unsigned long)(65536 - 20432), kStickDeclared) == -80);
+  CHECK(hid_stick_value(-32768, 32767, 16, 20688, kStickDeclared, true) == -80);
+  CHECK(hid_stick_value(-32768, 32767, 16, (unsigned long)(65536 - 20432), kStickDeclared, true) == 80);
+  CHECK(hid_stick_value(0, 65535, 16, 20688, kStickTwos) == 80);                       // the same data in a field declared unsigned
+  CHECK(hid_stick_value(0, 65535, 16, (unsigned long)(65536 - 20432), kStickTwos) == -80);
+  CHECK(hid_stick_value(-128, 127, 8, 0x80, kStickDeclared) == -128);
+  CHECK(hid_stick_value(-128, 127, 8, 0x80, kStickDeclared, true) == 127);
+}
+
 int main() {
+  check_signed_field_byte();
+  check_axis_roles();
   check_stick_encodings();
   check_frame1_dinput_axes();
   check_frame1_own_dinput();
