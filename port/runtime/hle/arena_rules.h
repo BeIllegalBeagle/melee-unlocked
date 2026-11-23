@@ -44,7 +44,14 @@ struct Member {
   uint16_t wins = 0, losses = 0;
   uint8_t character = kNone;   // picked on the character select (Slippi's external id), kNone not yet
   uint8_t costume = 0;
+  // A Pro AI: the member who added it (its model plays on that member's machine, as that machine's
+  // partner port), kNone for a person. It has no machine or links of its own, never votes or hosts,
+  // and fights only beside its owner in a doubles or free-for-all ring (one machine can't play singles).
+  uint8_t bot_of = kNone;
+  uint8_t pro = 0;             // which pro (the model follows the character, ghost_ai)
 };
+inline bool is_bot(const Member& m) { return m.bot_of != kNone; }
+constexpr int kMinPeople = 2;   // a match needs two machines: a ring with Pro AIs needs two people in it
 
 struct Room {
   uint32_t rev = 0;                    // counts up with every change
@@ -101,6 +108,9 @@ uint8_t next_up(const Room& room);                 // who comes in at the next c
 bool switch_offered(const Room& room, Ring kind, std::string* why = nullptr);
 // The members a proposed switch (to `kind`) needs a yes from: everyone who would be in the new
 // ring, fighters first (in slot order) then the line. Empty when the switch is not possible.
+// Who would be in a new ring of `kind` (people and the Pro AIs that come with them), empty when it
+// can't be played.
+std::vector<uint8_t> lineup(const Room& room, Ring kind);
 std::vector<uint8_t> switch_voters(const Room& room, Ring kind);
 std::vector<uint8_t> switch_voters(const Room& room);   // for the pending switch
 // True when the room obeys its own rules (ids unique and in range, ring and line hold members, nobody
@@ -112,9 +122,15 @@ bool valid(const Room& room);
 // slot is filled; otherwise the new member joins the back of the line.
 uint8_t join(Room& room, const std::string& code, const std::string& name);
 bool leave(Room& room, uint8_t id);
+// A person adds their Pro AI (one each, the room's new features on: ffa_allowed), or takes it away.
+// The Pro AI's id, kNone when refused. `character` is Slippi's external id.
+uint8_t add_bot(Room& room, uint8_t owner, uint8_t character, uint8_t pro);
+bool remove_bot(Room& room, uint8_t owner);
+uint8_t bot_of(const Room& room, uint8_t owner);   // the person's Pro AI, kNone
+int people(const Room& room);                       // members who are people
 bool set_mode(Room& room, Mode mode);
-// Every member's build plays a free-for-all (the host's word). Turning it off ends a pending
-// free-for-all proposal and takes a free-for-all ring back to singles.
+// Every member's build plays a free-for-all and Pro AIs (the host's word). Turning it off ends a
+// pending free-for-all proposal, takes a free-for-all ring back to singles and removes the Pro AIs.
 bool set_ffa_allowed(Room& room, bool allowed);
 // A spectator steps into the line, or out of it to just watch. Fighters are not moved by this.
 bool toggle_line(Room& room, uint8_t id);
@@ -140,7 +156,8 @@ bool game_end(Room& room, uint8_t winner_team);
 // ---- wire form ----
 // Wire 2 is what builds before free-for-all read: it carries no ring kind beyond doubles, so a room
 // encoded for them must not be a free-for-all (the host keeps ffa_allowed off while such a build is
-// in the room). Wire 3 adds the kind, the proposed kind and ffa_allowed. decode reads both.
+// in the room). Wire 3 adds the kind, the proposed kind, ffa_allowed and each member's Pro AI owner and
+// pro. decode reads both.
 constexpr uint8_t kWireLegacy = 2, kWireVersion = 3;
 std::vector<uint8_t> encode(const Room& room, uint8_t version = kWireVersion);
 bool decode(const uint8_t* data, size_t size, Room& out);

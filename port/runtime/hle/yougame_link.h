@@ -345,6 +345,9 @@ struct FriendsLobby {
   std::shared_ptr<const lobby::Plan> plan;
 };
 FriendsLobby friends_lobby();
+// A match made from connect codes (an Arena room or a Direct game with Pro AI seats) plays a setup its room
+// froze the same way: friends_lobby() returns it while no YouGame Friends lobby is open. nullptr clears it.
+void set_code_match_plan(std::shared_ptr<const lobby::Plan> plan);
 // The game refused the Friends lobby's frozen setup before frame 1: a guest ends that match in the room
 // (lobby::Session::refuse_setup); the host's own call-off follows the park (next_match).
 void lobby_refuse_setup();

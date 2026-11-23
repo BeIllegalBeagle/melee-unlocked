@@ -31,6 +31,21 @@ uint8_t pop_front(Room& r) {
   return id;
 }
 
+// Whether `id` may take a ring slot now: a person always; a Pro AI only in a doubles or free-for-all ring
+// its owner is already in.
+bool may_fight(const Room& r, uint8_t id) {
+  const Member* m = find(r, id);
+  if (!m) return false;
+  if (!is_bot(*m)) return true;
+  return r.kind != Ring::Singles && ring_slot(r, m->bot_of) >= 0;
+}
+int people_in_ring(const Room& r) {
+  int n = 0;
+  for (int s = 0; s < ring_size(r); ++s)
+    if (const Member* m = find(r, r.ring[s])) n += is_bot(*m) ? 0 : 1;
+  return n;
+}
+
 void clear_choices(Room& r) {
   r.asker = kNone; r.refused = 0;
   r.leaving_slot = kNone; r.incoming = kNone; r.leaver_plays_winner = false;
@@ -78,11 +93,15 @@ void shrink_to_singles(Room& r) {
 // a game the ring is the game's). A doubles ring that cannot fill four slots goes on as a free-for-all
 // when three remain and every build plays one, else as singles; a free-for-all under kFfaMin goes to
 // singles.
+void seat_bots(Room& r);
 void normalize(Room& r) {
   const int n = ring_size(r);
-  if (!r.in_game)
+  if (!r.in_game) {
+    seat_bots(r);
     for (int s = 0; s < n; ++s)
-      if (r.ring[s] == kNone && !r.line.empty()) { r.ring[s] = pop_front(r); r.tenure[s] = 0; }
+      if (r.ring[s] == kNone && !r.line.empty() && may_fight(r, r.line.front())) { r.ring[s] = pop_front(r); r.tenure[s] = 0; }
+    seat_bots(r);
+  }
   if (doubles(r) && fighters(r) < 4 && !r.in_game) {
     if (r.ffa_allowed && fighters(r) >= kFfaMin) {
       r.kind = Ring::Ffa;
@@ -106,6 +125,46 @@ void normalize(Room& r) {
   if (r.switch_pending && switch_voters(r).empty()) clear_switch(r);
 }
 
+// Pro AIs between games: one whose owner is out of the ring (or in a singles ring) goes to the front of the
+// line; a free slot takes the first in line who may fight (people, and Pro AIs whose owner is in); a ring
+// with fewer than two people trades its last Pro AI for the first person waiting.
+void seat_bots(Room& r) {
+  if (r.in_game) return;
+  const int n = ring_size(r);
+  for (int s = 0; s < n; ++s) {
+    if (r.ring[s] == kNone || may_fight(r, r.ring[s])) continue;
+    r.line.insert(r.line.begin(), r.ring[s]);
+    r.ring[s] = kNone; r.tenure[s] = 0;
+  }
+  for (int pass = 0; pass < 2; ++pass)   // a person seated in pass 0 lets their Pro AI in, in pass 1
+    for (int s = 0; s < n; ++s) {
+      if (r.ring[s] != kNone) continue;
+      for (size_t i = 0; i < r.line.size(); ++i)
+        if (may_fight(r, r.line[i])) {
+          r.ring[s] = r.line[i]; r.tenure[s] = 0;
+          r.line.erase(r.line.begin() + (std::ptrdiff_t)i);
+          break;
+        }
+    }
+  if (people_in_ring(r) < kMinPeople && fighters(r) > people_in_ring(r)) {
+    for (size_t i = 0; i < r.line.size(); ++i) {
+      const Member* m = find(r, r.line[i]);
+      if (!m || is_bot(*m)) continue;
+      for (int s = n - 1; s >= 0; --s) {
+        const Member* b = find(r, r.ring[s]);
+        if (!b || !is_bot(*b)) continue;
+        const uint8_t person = r.line[i];
+        r.line.erase(r.line.begin() + (std::ptrdiff_t)i);
+        r.line.insert(r.line.begin(), r.ring[s]);
+        r.ring[s] = person; r.tenure[s] = 0;
+        break;
+      }
+      break;
+    }
+  }
+  compact_ring(r);
+}
+
 bool switch_complete(const Room& r) {
   if (!r.switch_pending) return false;
   const std::vector<uint8_t> voters = switch_voters(r);
@@ -116,7 +175,7 @@ bool switch_complete(const Room& r) {
 
 void apply_switch(Room& r) {
   const Ring to = r.switch_to;
-  const std::vector<uint8_t> v = switch_voters(r);
+  const std::vector<uint8_t> v = lineup(r, to);
   clear_switch(r);
   if (v.empty() || to == r.kind) return;
   clear_choices(r);
@@ -253,7 +312,13 @@ int fighters(const Room& r) {
 }
 bool ring_ready(const Room& r) {
   const int n = fighters(r);
-  if (ffa(r)) return n >= kFfaMin && (n == kRingMax || r.line.empty());
+  if (people_in_ring(r) < kMinPeople) return false;   // one machine is no match
+  if (ffa(r)) {
+    // Full, or nobody waiting who may come in (a Pro AI whose owner sits out waits for its owner).
+    bool waiting = false;
+    for (uint8_t id : r.line) waiting = waiting || may_fight(r, id);
+    return n >= kFfaMin && (n == kRingMax || !waiting);
+  }
   return n == ring_size(r);
 }
 int ring_slot(const Room& r, uint8_t id) {
@@ -274,8 +339,17 @@ Role role(const Room& r, uint8_t id) {
 }
 uint8_t owner(const Room& r) {
   uint8_t best = kNone;
-  for (const Member& m : r.members) if (m.id < best) best = m.id;
+  for (const Member& m : r.members) if (!is_bot(m) && m.id < best) best = m.id;
   return best;
+}
+uint8_t bot_of(const Room& r, uint8_t owner_id) {
+  for (const Member& m : r.members) if (is_bot(m) && m.bot_of == owner_id) return m.id;
+  return kNone;
+}
+int people(const Room& r) {
+  int n = 0;
+  for (const Member& m : r.members) n += is_bot(m) ? 0 : 1;
+  return n;
 }
 uint8_t next_up(const Room& r) {
   if (r.incoming != kNone) return r.incoming;
@@ -287,29 +361,70 @@ bool switch_offered(const Room& r, Ring kind, std::string* why) {
   const auto no = [&](const char* reason) { if (why) *why = reason; return false; };
   if ((uint8_t)kind >= kRingKinds) return no("");
   if (kind == r.kind) return no("");
-  if (kind == Ring::Doubles && r.members.size() < 4) return no("Doubles needs 4 people");
+  if (kind == Ring::Doubles && r.members.size() < 4) return no("Doubles needs 4 players");
   if (kind == Ring::Ffa) {
-    if (r.members.size() < (size_t)kFfaMin) return no("Free-for-all needs 3 people");
+    if (r.members.size() < (size_t)kFfaMin) return no("Free-for-all needs 3 players");
     if (!r.ffa_allowed) return no("Everyone needs the latest Melee Unlocked");
   }
-  if (switch_voters(r, kind).empty()) return no(kind == Ring::Doubles ? "Doubles needs 4 people" : "Free-for-all needs 3 people");
+  if (switch_voters(r, kind).empty()) return no(kind == Ring::Doubles ? "Doubles needs 4 players" : "Free-for-all needs 3 players");
   if (why) why->clear();
   return true;
 }
 
-std::vector<uint8_t> switch_voters(const Room& r, Ring kind) {
+// Who would be in a new ring of `kind`: the fighters, then the line, up to its size; someone just
+// watching only when the ring would be short without them. A Pro AI only with its owner in it, never in
+// singles. Empty when the ring would be short, or have fewer than two people.
+std::vector<uint8_t> lineup(const Room& r, Ring kind) {
   std::vector<uint8_t> v;
   if ((uint8_t)kind >= kRingKinds || kind == r.kind) return v;
   if (kind == Ring::Ffa && !r.ffa_allowed) return v;
-  for (int s = 0; s < ring_size(r); ++s) if (r.ring[s] != kNone) v.push_back(r.ring[s]);
-  if (kind == Ring::Singles) return v.size() >= 2 ? v : std::vector<uint8_t>{};
-  const size_t want = kind == Ring::Doubles ? 4 : (size_t)kRingMax, least = kind == Ring::Doubles ? 4 : (size_t)kFfaMin;
-  // The fighters, then the line, up to the new ring's size; someone just watching only when the ring
-  // would be short without them.
-  for (uint8_t id : r.line) if (v.size() < want) v.push_back(id);
-  for (const Member& m : r.members)
-    if (v.size() < least && std::find(v.begin(), v.end(), m.id) == v.end()) v.push_back(m.id);
-  return v.size() >= least ? v : std::vector<uint8_t>{};
+  const size_t want = kind == Ring::Singles ? 2 : kind == Ring::Doubles ? 4 : (size_t)kRingMax;
+  const size_t least = kind == Ring::Singles ? 2 : kind == Ring::Doubles ? 4 : (size_t)kFfaMin;
+  const auto person = [&](uint8_t id) { const Member* m = find(r, id); return m && !is_bot(*m); };
+  // People: the fighters, then the line, up to the ring's size; someone just watching only while the
+  // ring would be short (counting the Pro AIs that will come in with their owners).
+  if (kind == Ring::Singles) {
+    // Back to singles: everyone fighting now has a say (the ring shrinks to its first two).
+    for (int s = 0; s < ring_size(r); ++s) if (person(r.ring[s])) v.push_back(r.ring[s]);
+    return (int)v.size() >= kMinPeople ? v : std::vector<uint8_t>{};
+  }
+  for (int s = 0; s < ring_size(r); ++s) if (person(r.ring[s]) && v.size() < want) v.push_back(r.ring[s]);
+  {
+    for (uint8_t id : r.line) if (person(id) && v.size() < want) v.push_back(id);
+  }
+  const auto bots_with_owners = [&](const std::vector<uint8_t>& people_in) {
+    size_t n = 0;
+    if (kind == Ring::Singles) return n;
+    for (const Member& m : r.members)
+      if (is_bot(m) && std::find(people_in.begin(), people_in.end(), m.bot_of) != people_in.end()) ++n;
+    return n;
+  };
+  for (const Member& m : r.members) {
+    if (is_bot(m) || std::find(v.begin(), v.end(), m.id) != v.end()) continue;
+    if (v.size() + bots_with_owners(v) >= least || v.size() >= want) break;
+    v.push_back(m.id);
+  }
+  // Then each Pro AI whose owner is in, in the order they wait (the ring's, then the line's), while there is room.
+  if (kind != Ring::Singles) {
+    std::vector<uint8_t> order;
+    for (int s = 0; s < ring_size(r); ++s) order.push_back(r.ring[s]);
+    for (uint8_t id : r.line) order.push_back(id);
+    for (const Member& m : r.members) order.push_back(m.id);
+    for (uint8_t id : order) {
+      const Member* m = find(r, id);
+      if (!m || !is_bot(*m) || v.size() >= want || std::find(v.begin(), v.end(), id) != v.end()) continue;
+      if (std::find(v.begin(), v.end(), m->bot_of) != v.end()) v.push_back(id);
+    }
+  }
+  int people_in = 0;
+  for (uint8_t id : v) people_in += person(id) ? 1 : 0;
+  if (v.size() < least || people_in < kMinPeople) return {};
+  return v;
+}
+std::vector<uint8_t> switch_voters(const Room& r, Ring kind) {
+  std::vector<uint8_t> v = lineup(r, kind);
+  v.erase(std::remove_if(v.begin(), v.end(), [&](uint8_t id) { const Member* m = find(r, id); return !m || is_bot(*m); }), v.end());
+  return v;
 }
 std::vector<uint8_t> switch_voters(const Room& r) {
   return r.switch_pending ? switch_voters(r, r.switch_to) : std::vector<uint8_t>{};
@@ -325,6 +440,11 @@ bool valid(const Room& r) {
     seen |= 1u << m.id;
     if (m.code.empty() || m.code.size() > kMaxCode || m.name.size() > kMaxName) return false;
     for (size_t j = 0; j < i; ++j) if (r.members[j].code == m.code) return false;
+  }
+  for (const Member& m : r.members) {
+    if (!is_bot(m)) continue;
+    const Member* o = find(r, m.bot_of);
+    if (!o || is_bot(*o) || bot_of(r, m.bot_of) != m.id || !r.ffa_allowed) return false;
   }
   uint32_t placed = 0;
   auto place = [&](uint8_t id) {
@@ -377,6 +497,7 @@ uint8_t join(Room& r, const std::string& code_in, const std::string& name_in) {
 
 bool leave(Room& r, uint8_t id) {
   if (!find(r, id)) return false;
+  if (const uint8_t bot = bot_of(r, id); bot != kNone) leave(r, bot);   // a person's Pro AI goes with them
   r.members.erase(std::remove_if(r.members.begin(), r.members.end(), [&](const Member& m) { return m.id == id; }), r.members.end());
   const int s = ring_slot(r, id);
   if (s >= 0) { r.ring[s] = kNone; r.tenure[s] = 0; }
@@ -393,6 +514,30 @@ bool leave(Room& r, uint8_t id) {
   return true;
 }
 
+uint8_t add_bot(Room& r, uint8_t owner_id, uint8_t character, uint8_t pro) {
+  const Member* o = find(r, owner_id);
+  if (!o || is_bot(*o) || !r.ffa_allowed || bot_of(r, owner_id) != kNone || pro > 0x7F) return kNone;
+  if (r.members.size() >= (size_t)kMaxMembers) return kNone;
+  uint8_t id = 0;
+  while (find(r, id)) ++id;
+  Member m;
+  m.id = id;
+  m.code = "PROAI#" + std::to_string(owner_id);   // never a Slippi code (digits only after the #)
+  m.name = clean(o->name, kMaxName - 6, false) + " (AI)";
+  m.bot_of = owner_id;
+  m.pro = pro;
+  m.character = character;
+  r.members.push_back(m);
+  r.line.push_back(id);
+  normalize(r);
+  bump(r);
+  return id;
+}
+bool remove_bot(Room& r, uint8_t owner_id) {
+  const uint8_t bot = bot_of(r, owner_id);
+  return bot != kNone && leave(r, bot);
+}
+
 bool set_mode(Room& r, Mode mode) {
   if ((uint8_t)mode > 2 || r.mode == mode) return false;
   r.mode = mode;
@@ -404,6 +549,10 @@ bool set_ffa_allowed(Room& r, bool allowed) {
   if (r.ffa_allowed == allowed) return false;
   r.ffa_allowed = allowed;
   if (!allowed) {
+    // A build before Pro AIs came in: they leave (it could not see them).
+    std::vector<uint8_t> bots;
+    for (const Member& m : r.members) if (is_bot(m)) bots.push_back(m.id);
+    for (uint8_t id : bots) leave(r, id);
     if (r.switch_pending && r.switch_to == Ring::Ffa) clear_switch(r);
     if (ffa(r) && !r.in_game) shrink_to_singles(r);
     normalize(r);
@@ -589,6 +738,7 @@ std::vector<uint8_t> encode(const Room& r, uint8_t version) {
   for (const Member& m : r.members) {
     o.push_back(m.id); put16(o, m.wins); put16(o, m.losses); o.push_back(m.character); o.push_back(m.costume);
     put_str(o, m.code); put_str(o, m.name);
+    if (!legacy) { o.push_back(m.bot_of); o.push_back(m.pro); }
   }
   o.push_back((uint8_t)r.line.size());
   o.insert(o.end(), r.line.begin(), r.line.end());
@@ -630,6 +780,7 @@ bool decode(const uint8_t* data, size_t size, Room& out) {
     Member m;
     m.id = in.u8(); m.wins = in.u16(); m.losses = in.u16(); m.character = in.u8(); m.costume = in.u8();
     m.code = in.str(kMaxCode); m.name = in.str(kMaxName);
+    if (!legacy) { m.bot_of = in.u8(); m.pro = in.u8(); }
     if (!in.ok) return false;
     r.members.push_back(std::move(m));
   }
@@ -648,12 +799,15 @@ std::vector<std::pair<uint8_t, uint8_t>> feed_tree(const Room& r, int fanout) {
   // Senders by level: the fighters first, then the watchers who already have the feed.
   std::vector<std::vector<uint8_t>> levels(1);
   std::vector<int> load(kMaxMembers, 0);
-  for (int s = 0; s < ring_size(r); ++s) if (r.ring[s] != kNone) levels[0].push_back(r.ring[s]);
+  const auto person = [&](uint8_t id) { const Member* m = find(r, id); return m && !is_bot(*m); };
+  for (int s = 0; s < ring_size(r); ++s) if (person(r.ring[s])) levels[0].push_back(r.ring[s]);
   if (levels[0].empty()) return edges;
   // Receivers: the line first (the next to play gets the shortest path), then the watchers by join order.
-  std::vector<uint8_t> receivers = r.line;
+  // Pro AIs have no machine: they watch nothing.
+  std::vector<uint8_t> receivers;
+  for (uint8_t id : r.line) if (person(id)) receivers.push_back(id);
   for (const Member& m : r.members)
-    if (role(r, m.id) == Role::Watching) receivers.push_back(m.id);
+    if (!is_bot(m) && role(r, m.id) == Role::Watching) receivers.push_back(m.id);
   for (uint8_t who : receivers) {
     for (size_t level = 0; level < levels.size(); ++level) {
       uint8_t best = kNone;
@@ -691,8 +845,10 @@ std::vector<std::pair<uint8_t, uint8_t>> wanted_links(const Room& r, int fanout)
     if (a == kNone || b == kNone || a == b) return;
     links.push_back({std::min(a, b), std::max(a, b)});
   };
+  const auto person = [&](uint8_t id) { const Member* m = find(r, id); return m && !is_bot(*m); };
   for (int a = 0; a < ring_size(r); ++a)
-    for (int b = a + 1; b < ring_size(r); ++b) add(r.ring[a], r.ring[b]);
+    for (int b = a + 1; b < ring_size(r); ++b)
+      if (person(r.ring[a]) && person(r.ring[b])) add(r.ring[a], r.ring[b]);
   for (const auto& e : feed_tree(r, fanout)) add(e.first, e.second);
   std::sort(links.begin(), links.end());
   links.erase(std::unique(links.begin(), links.end()), links.end());

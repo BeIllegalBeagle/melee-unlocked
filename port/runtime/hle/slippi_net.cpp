@@ -2632,7 +2632,7 @@ static json local_peer_ticket(const UserInfo& me, Matchmaking::OnlinePlayMode mo
       p["uid"] = "local-peer-" + std::to_string(i + 1); p["displayName"] = "Peer " + std::to_string(i + 1);
       p["connectCode"] = "PEER#00" + std::to_string(i + 1);
     }
-    p["port"] = i + 1;
+    p["port"] = local_peer.ports.size() == (size_t)n ? local_peer.ports[i] + 1 : i + 1;
     p["isLocalPlayer"] = local;
     p["ipAddress"] = addr;
     p["ipAddressLan"] = addr;
@@ -2643,7 +2643,7 @@ static json local_peer_ticket(const UserInfo& me, Matchmaking::OnlinePlayMode mo
   resp["type"] = "get-ticket-resp";
   resp["matchId"] = "mode." + std::string(mode_name) + "-local-test";
   resp["players"] = players;
-  resp["isHost"] = local_peer.local_index == 0;
+  resp["isHost"] = local_peer.local_index == 0;   // the first machine decides (port 0 in a setup with Pro AIs)
   if (n == 2) resp["stages"] = {0x2, 0x3, 0x8, 0x1C, 0x1F, 0x20};
   return resp;
 }

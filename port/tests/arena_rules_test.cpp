@@ -442,14 +442,14 @@ Room ffa_room(int n) {
 TEST(ffa_needs_three_and_the_hosts_word) {
   Room r = room_of(2);
   std::string why;
-  CHECK(!switch_offered(r, Ring::Ffa, &why) && why == "Free-for-all needs 3 people");
+  CHECK(!switch_offered(r, Ring::Ffa, &why) && why == "Free-for-all needs 3 players");
   CHECK(!propose_switch(r, 0, Ring::Ffa));
   Room r3 = room_of(3);
   CHECK(!switch_offered(r3, Ring::Ffa, &why) && why == "Everyone needs the latest Melee Unlocked");
   CHECK(!propose_switch(r3, 0, Ring::Ffa));
   CHECK(set_ffa_allowed(r3, true) && !set_ffa_allowed(r3, true));
   CHECK(switch_offered(r3, Ring::Ffa, &why) && why.empty());
-  CHECK(!switch_offered(r3, Ring::Doubles, &why) && why == "Doubles needs 4 people");
+  CHECK(!switch_offered(r3, Ring::Doubles, &why) && why == "Doubles needs 4 players");
   CHECK(!switch_offered(r3, Ring::Singles, &why));   // already singles
   CHECK((switch_voters(r3, Ring::Ffa) == std::vector<uint8_t>{0, 1, 2}));
 }
@@ -747,6 +747,112 @@ TEST(links_in_doubles_connect_all_four_players) {
   CHECK(fighter_pairs == 6);   // every pair of the four plays over its own link, as in Teams
 }
 
+// ---------------------------------------------------------------- Pro AIs
+// The invariants every room keeps between games: a Pro AI in the ring has its owner in it, never in
+// singles, and a ring with a Pro AI has two people in it.
+bool bots_seated_right(const Room& r) {
+  if (r.in_game) return true;
+  int people_in = 0, bots_in = 0;
+  for (int s = 0; s < ring_size(r); ++s) {
+    const Member* m = find(r, r.ring[s]);
+    if (!m) continue;
+    if (!is_bot(*m)) { ++people_in; continue; }
+    ++bots_in;
+    if (r.kind == Ring::Singles || ring_slot(r, m->bot_of) < 0) return false;
+  }
+  return bots_in == 0 || people_in >= kMinPeople;
+}
+Room two_people_ffa_ok() {
+  Room r = room_of(2);
+  set_ffa_allowed(r, true);
+  return r;
+}
+
+TEST(pro_ai_makes_a_free_for_all_of_three) {
+  Room r = two_people_ffa_ok();
+  const uint8_t bot = add_bot(r, 0, 2, 3);
+  CHECK(bot == 2);
+  CHECK(r.members.size() == 3 && people(r) == 2 && bot_of(r, 0) == 2);
+  CHECK(r.kind == Ring::Singles && ring_slot(r, bot) < 0);   // singles never seats a Pro AI
+  CHECK(owner(r) == 0);
+  std::string why;
+  CHECK(switch_offered(r, Ring::Ffa, &why));
+  CHECK(propose_switch(r, 0, Ring::Ffa));
+  CHECK((switch_voters(r) == std::vector<uint8_t>{0, 1}));   // the Pro AI never votes
+  CHECK(vote_switch(r, 1, true));
+  CHECK(r.kind == Ring::Ffa && fighters(r) == 3 && ring_slot(r, bot) >= 0 && ring_ready(r));
+  CHECK(valid(r) && bots_seated_right(r));
+  for (int g = 0; g < 6; ++g) {
+    win(r, r.ring[g % 3] == kNone ? r.ring[0] : r.ring[g % 3]);
+    CHECK(valid(r) && bots_seated_right(r) && fighters(r) == 3);
+  }
+}
+
+TEST(pro_ai_one_each_and_goes_with_its_owner) {
+  Room r = two_people_ffa_ok();
+  CHECK(add_bot(r, 0, 2, 0) != kNone);
+  CHECK(add_bot(r, 0, 9, 1) == kNone);                     // one each
+  CHECK(add_bot(r, bot_of(r, 0), 2, 0) == kNone);         // a Pro AI adds none
+  CHECK(add_bot(r, 1, 20, 0) != kNone);
+  CHECK(people(r) == 2 && r.members.size() == 4);
+  CHECK(leave(r, 0));
+  CHECK(r.members.size() == 2 && bot_of(r, 0) == kNone && people(r) == 1);
+  CHECK(valid(r));
+  CHECK(remove_bot(r, 1));
+  CHECK(r.members.size() == 1);
+}
+
+TEST(pro_ai_doubles_two_people_two_ais) {
+  Room r = two_people_ffa_ok();
+  add_bot(r, 0, 2, 0);
+  add_bot(r, 1, 20, 1);
+  CHECK(switch_offered(r, Ring::Doubles));
+  CHECK(propose_switch(r, 0, Ring::Doubles));
+  CHECK(vote_switch(r, 1, true));
+  CHECK(r.kind == Ring::Doubles && fighters(r) == 4 && ring_ready(r) && valid(r) && bots_seated_right(r));
+  for (int g = 0; g < 8; ++g) {
+    win(r, r.ring[(g % 2) * 2]);
+    CHECK(valid(r) && bots_seated_right(r) && fighters(r) == 4);
+  }
+}
+
+TEST(pro_ai_sits_out_with_its_owner) {
+  // Three people and one Pro AI in a free-for-all: when its owner steps out for someone waiting, the
+  // Pro AI leaves the ring too, and a person (never a Pro AI without its owner) takes its slot.
+  Room r = room_of(4);
+  set_ffa_allowed(r, true);
+  const uint8_t bot = add_bot(r, 2, 2, 0);
+  CHECK(propose_switch(r, 0, Ring::Ffa));
+  for (uint8_t v : switch_voters(r)) vote_switch(r, v, true);
+  CHECK(r.kind == Ring::Ffa);
+  CHECK(bots_seated_right(r) && valid(r));
+  for (int g = 0; g < 12; ++g) {
+    const uint8_t w = r.ring[0];
+    win(r, w);
+    CHECK(valid(r) && bots_seated_right(r));
+    if (ring_slot(r, 2) < 0) CHECK(ring_slot(r, bot) < 0);
+  }
+}
+
+TEST(pro_ais_leave_when_an_older_build_joins) {
+  Room r = two_people_ffa_ok();
+  add_bot(r, 0, 2, 0);
+  CHECK(set_ffa_allowed(r, false));
+  CHECK(r.members.size() == 2 && bot_of(r, 0) == kNone && valid(r));
+}
+
+TEST(pro_ai_wire_round_trip) {
+  Room r = two_people_ffa_ok();
+  add_bot(r, 1, 20, 3);
+  const std::vector<uint8_t> bytes = encode(r);
+  Room back;
+  CHECK(decode(bytes.data(), bytes.size(), back) && same(r, back));
+  const Member* b = find(back, bot_of(back, 1));
+  CHECK(b && b->bot_of == 1 && b->pro == 3 && b->character == 20);
+  // No machine of its own: no links, no feed.
+  for (const auto& l : wanted_links(back)) CHECK(l.first != b->id && l.second != b->id);
+}
+
 // ---------------------------------------------------------------- random operations
 TEST(random_operations_keep_the_room_valid) {
   const int failed_before = g_failed;
@@ -759,7 +865,7 @@ TEST(random_operations_keep_the_room_valid) {
       const std::vector<uint8_t> was = encode(r);
       const uint8_t id = (uint8_t)(rng() % 18);
       bool changed = false;
-      const uint32_t op = rng() % 14;
+      const uint32_t op = rng() % 16;
       Room prior = r;
       switch (op) {
         case 0: { char code[16]; std::snprintf(code, sizeof code, "P%d#1", next_code++); changed = join(r, code, "P") != kNone; break; }
@@ -773,9 +879,12 @@ TEST(random_operations_keep_the_room_valid) {
         case 8: changed = vote_switch(r, id, rng() % 5 != 0); break;
         case 9: case 10: changed = game_start(r); break;
         case 11: changed = (rng() % 8 == 0) && set_ffa_allowed(r, rng() % 4 != 0); break;
+        case 14: changed = add_bot(r, id, (uint8_t)(rng() % 26), (uint8_t)(rng() % 5)) != kNone; break;
+        case 15: changed = (rng() % 3 == 0) && remove_bot(r, id); break;
         default: changed = game_end(r, (uint8_t)(rng() % 3 == 0 ? kNone : rng() % 4)); break;
       }
       CHECK(valid(r));
+      CHECK(bots_seated_right(r));
       CHECK(changed ? r.rev > before : (r.rev == before && encode(r) == was));
       const std::vector<uint8_t> bytes = encode(r);
       Room back;

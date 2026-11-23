@@ -1958,6 +1958,7 @@ void prepare_online_match_state(std::vector<uint8_t>& q) {
   std::string setup_budget;           // with them, this side's squad budget identity (setup hash only)
   std::array<int, PLAYER_COUNT_MAX> lobby_colors;   // a Doubles lobby match: each machine's colour, by port
   lobby_colors.fill(-1);
+  std::vector<PlayerSelections> code_picks;   // a code match: each port's selections as sent (people's picks)
   if (local_ready && remote_ready) {
     bool decider = g_netplay->IsDecider();
     uint8_t remote_count = bounded_remote_machine_count();
@@ -1982,6 +1983,8 @@ void prepare_online_match_state(std::vector<uint8_t>& q) {
       // including local partners; readiness above still waits for each real connection's lock-in.
       frozen_selections.resize(lobby_plan->humans);
       for (int port = 0; port < lobby_plan->humans; ++port) {
+        // A code match: a person's own pick stands (their selections); only a Pro AI seat's is the setup's.
+        if (lobby_plan->code_match && lobby_plan->port[port].pro < 0 && ordered[port]) continue;
         auto& pick = frozen_selections[port];
         pick.player_idx = uint8_t(port); pick.character_id = uint8_t(lobby_plan->port[port].pick.ch);
         pick.character_color = uint8_t(lobby_plan->port[port].pick.color);
@@ -2002,6 +2005,7 @@ void prepare_online_match_state(std::vector<uint8_t>& q) {
     }
     std::vector<PlayerSelections> sent_selections;   // as sent, before the game's overwrites (setup hash)
     for (auto* o : ordered) sent_selections.push_back(*o);
+    code_picks = sent_selections;
     for (size_t i = 0; i < g_overwrite_selections.size() && i < ordered.size(); ++i) {
       ordered[i]->character_id = g_overwrite_selections[i].character_id;
       ordered[i]->character_color = g_overwrite_selections[i].character_color;
@@ -2244,7 +2248,19 @@ void prepare_online_match_state(std::vector<uint8_t>& q) {
     // Doubles: the room's pairs wear the colours their players chose (lobby::doubles_colors). Hashed with
     // the block: a machine that mapped other colours refuses the match, never plays a different one.
     const auto team_colors = yougame::lobby::doubles_colors(*lobby_plan, lobby_colors);
-    yougame::lobby::apply(*lobby_plan, block.data(), block.size(), timer, g_lobby_costumes.data(), &team_colors);
+    if (lobby_plan->code_match) {
+      // A code match: each person's own pick from the select (sent_selections, by port); the Pro AI seats
+      // keep the setup's. Hashed with the block, so a machine with other picks refuses the match.
+      yougame::lobby::Plan picked = *lobby_plan;
+      for (int port = 0; port < picked.humans && port < (int)code_picks.size(); ++port) {
+        if (picked.port[port].pro >= 0) continue;
+        picked.port[port].pick.ch = code_picks[port].character_id;
+        picked.port[port].pick.color = code_picks[port].character_color;
+      }
+      yougame::lobby::apply(picked, block.data(), block.size(), timer, g_lobby_costumes.data(), &team_colors);
+    } else {
+      yougame::lobby::apply(*lobby_plan, block.data(), block.size(), timer, g_lobby_costumes.data(), &team_colors);
+    }
     rng_offset = lobby_plan->seed;
     alt_stage_mode = 0;
     setup_inputs = yougame::lobby::inputs_hash(*lobby_plan);
@@ -2953,6 +2969,7 @@ ArenaMatchStatus arena_match_status() {
 
 bool arena_start_search(int mode, const std::string& code, bool locked, uint8_t character, uint8_t color,
                         uint8_t team, bool ffa, std::string* error) {
+  host::log("slippi: arena search: mode %d, code %s, locked %d, ffa %d", mode, code.c_str(), locked ? 1 : 0, ffa ? 1 : 0);
   if (mode != Matchmaking::DIRECT && mode != Matchmaking::TEAMS) return false;
   if (ffa && mode != Matchmaking::TEAMS) return false;
   if (!g_user) init();
@@ -3622,6 +3639,22 @@ bool handle_command(uint8_t cmd, const uint8_t* payload, uint32_t payload_len, s
     // Disable the console's second offline queue so inputs are delayed once.
     case CMD_GET_DELAY: q.clear(); q.push_back(session_mode() >= 0 ? 1 : 0);
       q.push_back(session_mode() >= 0 ? (uint8_t)effective_delay() : 0); return true;
+    // This machine's Pro AI seat in the match it plays (shim/mu_online.c drives its partner pad from the
+    // model): active, the seat's port, its pro. Asked once per match.
+    case CMD_PROAI_SEAT: {
+      q.assign(3, 0);
+      const auto lobby = yougame::friends_lobby();
+      const auto* p = lobby.open && lobby.plan && lobby.plan->ok ? lobby.plan.get() : nullptr;
+      if (p && p->second_local_port >= 0 && p->second_local_port < p->ports && p->port[p->second_local_port].pro >= 0 &&
+          session_mode() >= 0) {
+        q[0] = 1;
+        q[1] = (uint8_t)p->second_local_port;
+        q[2] = (uint8_t)p->port[p->second_local_port].pro;
+      }
+      host::log("slippi: Pro AI seat asked: setup %d, second local port %d, session %d -> %s", p ? 1 : 0,
+                p ? p->second_local_port : -1, session_mode(), q[0] ? "this machine plays it" : "none here");
+      return true;
+    }
     // Ranks: YouGame mode answers with its ladder rank; standalone never shows one (visibility 0
     // hides every rank display; the rest reads as unranked).
     case CMD_GET_RANK:

@@ -639,6 +639,10 @@ class Matchmaking {
     // The remotes' names and connect codes (an arena free-for-all of three, slippi_arena.cpp mesh), one
     // per remote; empty: the harness's "Peer n".
     std::vector<std::string> names, codes;
+    // Each machine's game port, in the order above (this machine at local_index): a match with Pro AI
+    // seats leaves each owner's next port to its AI (0 and 2 for two people, 1 and 3 their AIs). Empty:
+    // the machines take ports 0 to n-1.
+    std::vector<int> ports;
   };
 
   explicit Matchmaking(User* user);

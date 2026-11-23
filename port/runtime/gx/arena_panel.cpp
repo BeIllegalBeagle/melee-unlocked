@@ -97,11 +97,13 @@ struct State {
   size_t hint_members = 0;                  // the room's size the "4 in the room" hint last saw
   double hint_until = -1;                   // the hint shows until then
   std::string match_note;                   // the Rules page's Match row: why a kind is not offered
+  std::string bot_note;                     // the Pro AI row: why it can't come in
+  double bot_note_until = 0;
   double match_note_until = -1;
 } g;
 
 // What a lit-up button does.
-enum class Do : uint8_t { None, Rules, AddCode, Spot, Ask, Doubles, Opt0, Opt1, Opt2, Member, Leave, Warmup, Pip };
+enum class Do : uint8_t { None, Rules, AddCode, Spot, Ask, Doubles, Opt0, Opt1, Opt2, Member, Leave, Warmup, Pip, ProAi };
 // R's proposal: the other kind of ring the room can play now. From singles: doubles with four or more
 // in the room, else a free-for-all; from doubles: a free-for-all; from a free-for-all: doubles with four
 // or more, else singles. kRingKinds (none) when nothing else is offered.
@@ -815,12 +817,27 @@ void prompt_box(float x, float y, float w, const View& v, int kind) {
   }
 }
 
+// The Rules page's Pro AI row: Off, then the characters whose pro ships with the game (ProAI folder):
+// Fox (Cody), Falco (Mang0), Marth (Zain), Yoshi (aMSa). Slippi's external ids; the pro follows the
+// character (ghost_ai).
+struct BotChoice { uint8_t character, pro; const char* name; };
+constexpr BotChoice kBotChoices[] = {{2, 3, "Fox (Cody)"}, {20, 0, "Falco (Mang0)"}, {9, 1, "Marth (Zain)"}, {17, 4, "Yoshi (aMSa)"}};
+constexpr int kBotChoiceCount = (int)(sizeof kBotChoices / sizeof kBotChoices[0]);
+// Which choice this player's Pro AI is: -1 none.
+int my_bot_choice(const View& v) {
+  const uint8_t bot = ar::bot_of(v.room, v.self);
+  const Member* m = bot == ar::kNone ? nullptr : ar::find(v.room, bot);
+  if (!m) return -1;
+  for (int i = 0; i < kBotChoiceCount; ++i) if (kBotChoices[i].character == m->character) return i;
+  return 0;
+}
+
 // ---------------------------------------------------------------- the pages: rules, add a friend
 void page_box(float x, float y, float w, const View& v) {
   const Ink head{Face::Title, 13, kWhite, true, 2};
   const Ink small{Face::Body, 10, kGold, false, 0, false, 1.5f};
   if (g.page == Page::Rules) {
-    const float h = px(206);
+    const float h = px(234);
     glow(x, y, x + w, y + h, px(6), IM_COL32(243, 194, 46, 90), px(10));
     steel(x, y, x + w, y + h, kGold);
     text(small, x + px(8), y + px(8), "ROOM");
@@ -828,9 +845,13 @@ void page_box(float x, float y, float w, const View& v) {
     // Match: the ring's kind, or the one being voted on; a note under it says why a kind is not offered.
     const bool note = g.match_note_until > ImGui::GetTime() && !g.match_note.empty();
     const std::string match = v.room.switch_pending ? std::string(ar::ring_name(v.room.switch_to)) + " (vote)" : ar::ring_name(v.room.kind);
-    const std::string values[4] = {kModeWords[(int)v.room.mode], match, kLookNames[(int)g.look], g.tabs ? "Tabs" : "Shown"};
-    const char* labels[4] = {"Mode", "Match", "Look", "Panel"};
-    for (int i = 0; i < 4; ++i) {
+    // Pro AI: this player's own (it plays beside them in doubles and free-for-alls, on their machine).
+    const int bot = my_bot_choice(v);
+    const std::string mine = bot < 0 ? std::string("Off") : kBotChoices[bot].name;
+    const std::string values[5] = {kModeWords[(int)v.room.mode], match, mine, kLookNames[(int)g.look], g.tabs ? "Tabs" : "Shown"};
+    const char* labels[5] = {"Mode", "Match", "Your Pro AI", "Look", "Panel"};
+    const bool bot_note = g.bot_note_until > ImGui::GetTime() && !g.bot_note.empty();
+    for (int i = 0; i < 5; ++i) {
       const float yy = y + px(44) + i * px(28);
       if (g.row == i) {
         const int start = dl()->VtxBuffer.Size;
@@ -839,13 +860,14 @@ void page_box(float x, float y, float w, const View& v) {
       }
       const Ink lk{Face::Body, 9.5f, g.row == i ? kInk : kDimText};
       Ink vk{Face::Bold, 12, g.row == i ? kInk : kWhite};
-      text(lk, x + px(12), yy, i == 1 && note && g.row == 1 ? fit(lk, g.match_note, w - px(24)) : labels[i]);
+      text(lk, x + px(12), yy, i == 1 && note && g.row == 1 ? fit(lk, g.match_note, w - px(24))
+                               : i == 2 && bot_note && g.row == 2 ? fit(lk, g.bot_note, w - px(24)) : labels[i]);
       text(vk, x + px(12), yy + px(10), fit_name(vk, std::string("< ") + values[i] + " >", w - px(24)));
     }
     {
       // The last row: leave the room (A). A host's room closes for everyone, and the row says so.
-      const float yy = y + px(44) + 4 * px(28);
-      const bool sel = g.row == 4;
+      const float yy = y + px(44) + 5 * px(28);
+      const bool sel = g.row == 5;
       if (sel) {
         const int start = dl()->VtxBuffer.Size;
         dl()->AddRectFilled(ImVec2(x + px(6), yy - px(2)), ImVec2(x + w - px(6), yy + px(25)), kWhite, px(4));
@@ -1017,6 +1039,13 @@ void press(Do what, const View& v) {
       host::log("arena panel: %s pressed", ar::watch_layout() == 1 ? kPipBig : kPipSmall);
       ar::toggle_watch_layout();
       break;
+    case Do::ProAi:
+      // A Direct game becomes a room: the opponent, this player and their Pro AI (Fox, Cody's; the Rules page
+      // changes it), a free-for-all proposed once the friend is in.
+      host::log("arena panel: ADD PRO AI pressed");
+      send_act(Act::DirectProAi, kBotChoices[0].character, std::string(1, (char)kBotChoices[0].pro));
+      leave_panel();
+      break;
     case Do::Warmup:
       host::log("arena panel: WARM UP pressed");
       slippi::native_practice::submit_warmup();
@@ -1067,9 +1096,9 @@ void handle_input(const Frame& f, const View& v) {
   }
   if (g.page == Page::Rules) {
     if (step == 1) g.row = std::max(0, g.row - 1);
-    if (step == 2) g.row = std::min(4, g.row + 1);
-    if (g.row != 4) g.leave_armed = false;
-    if (g.row == 4) {
+    if (step == 2) g.row = std::min(5, g.row + 1);
+    if (g.row != 5) g.leave_armed = false;
+    if (g.row == 5) {
       // Leave the room: A, then A again (one press on the way down the list never leaves by accident).
       if (pressed & kA) {
         if (!g.leave_armed) g.leave_armed = true;
@@ -1099,8 +1128,23 @@ void handle_input(const Frame& f, const View& v) {
           g.match_note_until = ImGui::GetTime() + 3.0;
         }
       }
-      if (g.row == 2) { g.look = (Look)(((int)g.look + delta + kLookCount) % kLookCount); save(); }
-      if (g.row == 3) { g.tabs = !g.tabs; save(); }
+      if (g.row == 2 && v.active) {
+        // Off, Fox, Falco, Marth, Yoshi: this player's Pro AI comes in, changes, or leaves.
+        if (!v.room.ffa_allowed) {
+          g.bot_note = "Everyone needs the latest Melee Unlocked";
+          g.bot_note_until = ImGui::GetTime() + 3.0;
+        } else {
+          const int now = my_bot_choice(v);
+          const int next = ((now + 1 + delta) % (kBotChoiceCount + 1) + kBotChoiceCount + 1) % (kBotChoiceCount + 1) - 1;
+          if (next < 0) { host::log("arena panel: Pro AI off"); send_act(Act::RemoveBot); }
+          else {
+            host::log("arena panel: Pro AI %s", kBotChoices[next].name);
+            send_act(Act::AddBot, kBotChoices[next].character, std::string(1, (char)kBotChoices[next].pro));
+          }
+        }
+      }
+      if (g.row == 3) { g.look = (Look)(((int)g.look + delta + kLookCount) % kLookCount); save(); }
+      if (g.row == 4) { g.tabs = !g.tabs; save(); }
     }
     if (pressed & kB) { g.page = Page::None; g.row = 0; }
     return;
@@ -1747,6 +1791,16 @@ void draw_not_in_room(const Bars& b, const View& v) {
     float ny = y + th + px(10);
     dl()->AddRectFilled(ImVec2(x - px(4), ny - px(6)), ImVec2(x + tw + px(4), ny + lines.size() * px(16) + px(4)), IM_COL32(0, 0, 0, 190), px(5));
     for (const std::string& l : lines) { text(nk, x, line_top(nk, ny, 16), l); ny += px(16); }
+  }
+  if (!v.direct_opponent.empty()) {
+    // Connected in Direct: a Pro AI joins the two of you (a room, a free-for-all of three). Above the Arena card.
+    const float ay = y - th - px(10);
+    steel(x, ay, x + tw, ay + th, open ? kGold : IM_COL32(154, 166, 192, 200));
+    hot(x, ay, ay + th, Do::ProAi);
+    const Ink an{Face::Bold, 15, kWhite};
+    text_center(an, x + tw * .5f, line_top(an, ay + px(11), 18), "ADD PRO AI");
+    const Ink ak{Face::Body, 10.5f, IM_COL32(214, 220, 234, 255)};
+    text_center(ak, x + tw * .5f, line_top(ak, ay + th - px(11) - px(16), 16), fit_name(ak, "A 3-player free-for-all", tw - px(12)));
   }
   steel(x, y, x + tw, y + th, open ? kGold : IM_COL32(154, 166, 192, 200));
   hot(x, y, y + th, Do::AddCode);   // so the hand lands on it

@@ -44,6 +44,10 @@ void shutdown();
 enum class Act : uint8_t {
   ToggleLine = 1, Ask = 2, Answer = 3, GiveUp = 4, SetMode = 5, ProposeSwitch = 6, VoteSwitch = 7, Leave = 8,
   SetCharacter = 9,              // arg the character, text[0] the costume (sent by the room itself)
+  AddBot = 10,                   // this player's Pro AI: arg its character, text[0] the pro (again: changes them)
+  RemoveBot = 11,                // this player's Pro AI leaves the room
+  DirectProAi = 12,              // from a Direct game: a room with the opponent and this player's Pro AI
+                                 // (arg its character, text[0] the pro); it proposes a free-for-all
   OpenRoom = 20, AddCode = 21,   // the host's own (AddCode carries a connect code)
   LeaveRoom = 22,                // this player leaves the room (a host's room closes with it)
   JoinYouGame = 23,              // under YouGame: join the arena whose room code is text (an invite)
@@ -61,6 +65,7 @@ struct View {
   std::string status;                       // one plain line: what this member's game is doing
   std::string notice;                       // a short-lived line beside the room tab (a full room), else empty
   uint16_t warming = 0;                     // who is warming up in Training (the warm-up room), a bit per member id
+  std::string direct_opponent;              // out of a room: the Direct opponent this player is connected to (Add Pro AI)
 };
 View view();
 // Tests only (MELEE_TEST_ARENA_FIXTURE=<state>[:long]): view() answers a made-up room so the panel can

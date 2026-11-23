@@ -6732,9 +6732,19 @@ int invite_state(std::string* error) {
 }
 }  // namespace arena_room
 
+namespace { std::shared_ptr<const lobby::Plan> g_code_plan; }   // set_code_match_plan (guarded by g_mutex)
+void set_code_match_plan(std::shared_ptr<const lobby::Plan> plan) {
+  std::lock_guard<std::mutex> lock(g_mutex);
+  g_code_plan = std::move(plan);
+}
 FriendsLobby friends_lobby() {
   std::lock_guard<std::mutex> lock(g_mutex);
   FriendsLobby out;
+  if ((!g_room || !g_room->lobby) && g_code_plan && g_code_plan->ok) {
+    out.open = true;
+    out.plan = g_code_plan;
+    return out;
+  }
   if (!g_room || !g_room->lobby) return out;
   out.open = true;
   out.plan = g_room->lobby;
