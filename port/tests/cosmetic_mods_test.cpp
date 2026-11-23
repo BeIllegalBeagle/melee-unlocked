@@ -573,6 +573,15 @@ std::vector<uint8_t> audio_fst(const std::string& bank, uint32_t jp_start, uint3
 int main(int argc, char** argv) {
   // A probe for a stage file pair (an original and a pack's copy): the full online verdict, then exit.
   // Usage: port_cosmetic_mods_test --stage <original> <skin> <disc file name>
+  // ... --textures <original> <copy>: whether only texture and palette bytes differ.
+  if (argc == 4 && std::string(argv[1]) == "--textures") {
+    const auto load = [](const char* path) { std::ifstream f(path, std::ios::binary); std::vector<uint8_t> v((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>()); return v; };
+    std::string detail;
+    const bool ok = host::cosmetics::file_textures_only(load(argv[2]), load(argv[3]), &detail);
+    std::printf("%s: %s
+", ok ? "textures only" : "more than textures", detail.c_str());
+    return ok ? 0 : 1;
+  }
   if (argc == 5 && std::string(argv[1]) == "--stage") {
     const auto load = [](const char* path) { std::ifstream f(path, std::ios::binary); std::vector<uint8_t> v((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>()); return v; };
     std::vector<uint8_t> online; std::string detail;

@@ -6761,6 +6761,14 @@ RepublishResult republish_stage(uint8_t* fst, uint32_t fst_size, const std::stri
   return result;
 }
 
+bool file_textures_only(const std::vector<uint8_t>& clean, const std::vector<uint8_t>& candidate, std::string* detail) {
+  std::string local;
+  if (!detail) detail = &local;
+  if (!visual_dat_only(clean, candidate, detail)) return false;
+  *detail = "textures only";
+  return true;
+}
+
 bool stage_gameplay_matches(const std::vector<uint8_t>& clean, const std::vector<uint8_t>& candidate,
                             std::string* detail) {
   std::string local;
