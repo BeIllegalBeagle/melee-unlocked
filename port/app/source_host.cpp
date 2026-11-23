@@ -1843,10 +1843,12 @@ uint32_t h_game_options3() {
          (gx::RenderOptions::live_unlock_all() ? 0u : MU_GAME_OPTION3_LOCKED_CONTENT) |
          (gx::RenderOptions::live_results_screen() ? 0u : MU_GAME_OPTION3_SKIP_RESULTS);
 }
+// A switched-on PAL Stock Icons Gecko code (user_gecko::hand_ports_of_codes), set each frame.
+std::atomic<bool> g_code_pal_stock{false};
 uint32_t h_game_options() {
   if (yougame::console::console_active()) return 0; // canonical normal menus and language
   return (gecko::option_no_screen_shake ? MU_GAME_OPTION_NO_SCREEN_SHAKE : 0u) |
-         (gecko::option_pal_stock_icons ? MU_GAME_OPTION_PAL_STOCK_ICONS : 0u) |
+         (gecko::option_pal_stock_icons || g_code_pal_stock.load(std::memory_order_relaxed) ? MU_GAME_OPTION_PAL_STOCK_ICONS : 0u) |
          (gecko::option_widescreen ? MU_GAME_OPTION_WIDESCREEN : 0u) |   // the viewer's own, also in replays
          (gx::true_widescreen_active() ? MU_GAME_OPTION_TRUE_WIDESCREEN : 0u) |   // likewise: display only
          (((uint32_t)host::g_game_language.load(std::memory_order_relaxed) << MU_GAME_OPTION_LANGUAGE_SHIFT) &
@@ -3529,6 +3531,14 @@ void h_pad_read(MuPadStatus out[4]) {
   }
   // A pasted always-display hitbox code turns on the Arcade look switches its lines stand for.
   gx::set_arcade_display(gx::ArcadeSource::Codes, user_gecko::arcade_bits_of_codes());
+  // Hand-ported codes (user_gecko.h): a local player tag code and PAL Stock Icons run as the game's own
+  // features while the player has them on. Picture only, so online too.
+  {
+    const user_gecko::HandPorts hand = user_gecko::hand_ports_of_codes();
+    gx::set_code_ally_tag(hand.local_tag, hand.local_tag_text, hand.local_tag_arrow);
+    gx::set_code_pal_stock(hand.pal_stock_icons);
+    g_code_pal_stock.store(hand.pal_stock_icons, std::memory_order_relaxed);
+  }
   // Hidden test hook: MELEE_TEST_INSTALL_LOOK=<0 Diet, 1 Animelee, 2 Animelee x DBZ> starts that one-click install once.
   {
     static const int test_install = [] { const char* v = host::test_env::getenv("MELEE_TEST_INSTALL_LOOK"); return v && *v ? std::atoi(v) : -1; }();
