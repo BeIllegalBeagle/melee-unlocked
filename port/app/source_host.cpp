@@ -6179,7 +6179,19 @@ int run(void (*shutdown)(int)) {
   // DOL, m-ex) is refused here with a message instead of failing somewhere inside the game.
   if (!host::disc_has_vanilla_dol()) {
     yougame::notify_mod_refused(!g_explicit_mod_layers.empty(), yougame::mode_policy::ModRefusal::ModdedDol);
-    host::die("ISO DOL does not match vanilla Melee NTSC 1.02; the Source engine runs only the retail game (modded discs are not supported)");
+    // The player's disc, not a crash: said once, no crash report (main.cpp does the same for a disc problem).
+    static const char* kModdedDisc =
+        "This ISO is a modded Melee disc. The Source Port plays only the retail Super Smash Bros. Melee NTSC 1.02 disc.\n\n"
+        "Choose your retail ISO in the launcher, or put the modded disc in the Mods folder and play it from launcher > Mods.";
+    host::log("ISO DOL does not match vanilla Melee NTSC 1.02; the Source engine runs only the retail game (modded discs are not supported)");
+    std::fprintf(stderr, "%s\n", kModdedDisc);
+    host::log_flush();
+#ifdef _WIN32
+    if (!host::options.no_gc_adapter) MessageBoxA(nullptr, kModdedDisc, "Melee Unlocked", MB_ICONINFORMATION | MB_OK);
+    ExitProcess(2);
+#else
+    std::_Exit(2);
+#endif
   }
   // Diagnostic builds of the game (for example the M0 maths audit) without replacing the shipped DLL.
   if (yougame::mode_policy::mod_sources(yougame::active()).folders)
