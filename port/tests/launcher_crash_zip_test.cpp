@@ -223,6 +223,26 @@ int main() {
       }
     std::remove((game + "/melee_port.prev.log").c_str());
   }
+  {
+    // Send logs: when neither of the two newest sessions played online, the newest older one that did
+    // travels too (a ranked report sent after two Training sessions, 11-22); an offline one never does.
+    put(game + "/melee_port.prev.log", text("scene: major 1C minor 02 (frame 94)\n"));
+    put(game + "/melee_port.prev.2.log", text("scene: major 02 minor 02 (frame 94)\n"));
+    put(game + "/melee_port.prev.3.log", text("slippi: online frame 270 wall 1.0 s retrace 2 rollbacks 0\nyougame: ranked set unrated by the room, reason x\n"));
+    put(game + "/melee_port.prev.4.log", text("slippi: online frame 30 wall 1.0 s retrace 2 rollbacks 0\n"));
+    auto sent = launcher::crash::collect_logs(game, launcher_dir, {}, false);
+    std::vector<std::string> sent_names = names(sent);
+    CHECK(std::count(sent_names.begin(), sent_names.end(), std::string("melee_port.prev.3.log")) == 1);
+    CHECK(std::count(sent_names.begin(), sent_names.end(), std::string("melee_port.prev.2.log")) == 0);
+    CHECK(std::count(sent_names.begin(), sent_names.end(), std::string("melee_port.prev.4.log")) == 0);
+    // The newest log played online itself: nothing older is added.
+    put(game + "/melee_port.prev.log", text("slippi: online frame 60 wall 1.0 s retrace 2 rollbacks 0\n"));
+    sent = launcher::crash::collect_logs(game, launcher_dir, {}, false);
+    sent_names = names(sent);
+    CHECK(std::count(sent_names.begin(), sent_names.end(), std::string("melee_port.prev.3.log")) == 0);
+    for (const char* f : {"/melee_port.prev.log", "/melee_port.prev.2.log", "/melee_port.prev.3.log", "/melee_port.prev.4.log"})
+      std::remove((game + f).c_str());
+  }
   auto zip = launcher::crash::capped_zip(files);
   std::vector<Entry> entries;
   CHECK(read_zip(zip, entries));
