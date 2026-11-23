@@ -31,6 +31,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <cerrno>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -7304,7 +7305,15 @@ std::string retail_disc_problem(const fs::path& path) {
   const uint64_t size = fs::file_size(path, ec);
   char head[8]{};
   std::ifstream file(path, std::ios::binary);
-  if (ec || !file || !file.read(head, sizeof head)) return "The game disc file could not be read.";
+  if (ec || !file || !file.read(head, sizeof head)) {
+    // Which file and why (a report said only "could not be read", 11-22): the path the game was given and
+    // Windows' own reason, so the next report names the cause.
+    const std::string why = ec ? ec.message() : std::generic_category().message(errno);
+    host::log("cosmetics: the game disc %s could not be read for the looks (%s)", path.u8string().c_str(), why.c_str());
+    if (path.empty()) return "The game disc file could not be read: this game was started without one.";
+    return "The game disc file could not be read (" + path.filename().u8string() + ": " + why + "). Check that it is still "
+           "there, then choose it again on the launcher's Play page.";
+  }
   if (std::memcmp(head, "GALE01", 6) != 0) {
     if (size != kRetailSize)
       return "The game disc is a compressed or trimmed copy. These looks need the full 1.36 GB .iso: convert it to a "

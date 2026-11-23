@@ -672,7 +672,7 @@ void check_frame1_xinput() {
 static void check_stick_encodings() {
   using namespace host;
   // Signed range declared, offset-binary data (0x80 at rest): the declared reading is a corner.
-  CHECK(hid_stick_value(-127, 127, 8, 0x80, kStickDeclared) == 127);
+  CHECK(hid_stick_value(-127, 127, 8, 0x80, kStickDeclared) <= -127);
   CHECK(hid_stick_encoding(-127, 127, 8, 0x80) == kStickOffset);
   CHECK(hid_stick_value(-127, 127, 8, 0x80, kStickOffset) == 0);
   CHECK(hid_stick_value(-127, 127, 8, 0xFF, kStickOffset) == 127);   // full right
@@ -685,6 +685,14 @@ static void check_stick_encodings() {
   CHECK(hid_stick_value(0, 255, 8, 0x81, kStickTwos) <= -126);
   // 16-bit signed declared range with two's-complement data reads as declared once sign-extended.
   CHECK(hid_stick_value(-32768, 32767, 16, 0xFFFF, kStickTwos) == 0 || hid_stick_value(-32768, 32767, 16, 0xFFFF, kStickTwos) == -1);
+  // A signed range declared, and signed data: left is left (it was read as a large positive number, so
+  // left and right both read right; B0XX r2 DInput, 11-22).
+  CHECK(hid_stick_value(-32768, 32767, 16, 0x0000, kStickDeclared) == 0);
+  CHECK(hid_stick_value(-32768, 32767, 16, 0x50D0, kStickDeclared) >= 79);                 // +20688: right
+  CHECK(hid_stick_value(-32768, 32767, 16, 0xB030, kStickDeclared) <= -79);                // -20432: left
+  CHECK(hid_stick_value(-32768, 32767, 16, 0xB030, kStickDeclared, true) >= 79);           // Y: down -> flipped
+  CHECK(hid_stick_value(-127, 127, 8, 0xFF, kStickDeclared) == -1);                         // -1, not full right
+  CHECK(hid_stick_encoding(-32768, 32767, 16, 0) == kStickDeclared);
   // Normal pads at rest: as declared.
   CHECK(hid_stick_encoding(0, 255, 8, 128) == kStickDeclared);
   CHECK(hid_stick_encoding(0, 65535, 16, 32768) == kStickDeclared);

@@ -203,13 +203,16 @@ static int early_trace_on(void)
     return value;
 }
 
-/* MELEE_EARLY_ROLLBACK=1 turns it on; off by default (it adds rollbacks of its own). */
+/* On by default (owner 11-22): above about 41 ms one way, an early pad arrives after its frame was
+ * already run on a guess, so prediction alone never uses it; this is what makes it count there. It
+ * only rolls back when the early pad contradicts the guess at the game's action lines.
+ * MELEE_EARLY_ROLLBACK=0 turns it off (tests). */
 static int early_rollback_on(void)
 {
     static int value = -1;
     if (value < 0) {
         const char* v = getenv("MELEE_EARLY_ROLLBACK");
-        value = v != NULL && v[0] == '1';
+        value = !(v != NULL && v[0] == '0');
     }
     return value;
 }

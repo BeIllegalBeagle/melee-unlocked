@@ -1408,7 +1408,9 @@ void ds4_report(RAWINPUT* input, bool dualsense) {
   if (slot < 0 || !input->data.hid.dwSizeHid || !input->data.hid.dwCount) return;
   PadState pad{};
   uint16_t buttons = 0;
-  if (!playstation_parse(input->data.hid.bRawData, input->data.hid.dwSizeHid, dualsense, pad, buttons)) return;
+  // The newest of the reports Raw Input packed into this message (oldest first) is the pad's state now.
+  const uint8_t* newest = input->data.hid.bRawData + (size_t)(input->data.hid.dwCount - 1) * input->data.hid.dwSizeHid;
+  if (!playstation_parse(newest, input->data.hid.dwSizeHid, dualsense, pad, buttons)) return;
   std::lock_guard<std::mutex> lock(g_ds4_mutex); g_ds4_buttons[slot] = buttons; g_ds4_pads[slot] = pad;
 }
 
