@@ -740,6 +740,13 @@ static void check_signed_field_byte() {
     CHECK(hid_stick_value(-32768, 32767, 16, 0, kStickDeclared, flip) == 0);
     CHECK(hid_stick_value(-32768, 32767, 16, 127, kStickDeclared, flip) == 0);
   }
+  // Declared -32767..32767, resting on 127 (a B0XX, 11-23): scaled from the middle it read 0 on X and, flipped, -1 on Y.
+  for (const bool flip : {false, true}) {
+    CHECK(hid_stick_value(-32767, 32767, 16, 127, kStickDeclared, flip) == 0);
+    CHECK(hid_stick_value(-32767, 32767, 16, 48, kStickDeclared, flip) == 0);
+  }
+  CHECK(hid_stick_value(-32767, 32767, 16, 20688, kStickDeclared, true) == -80);
+  CHECK(hid_stick_value(-32767, 32767, 16, (unsigned long)(65536 - 20432), kStickDeclared, true) == 80);
   CHECK(hid_stick_value(-32768, 32767, 16, 20688, kStickDeclared) == 80);
   CHECK(hid_stick_value(-32768, 32767, 16, (unsigned long)(65536 - 20432), kStickDeclared) == -80);
   CHECK(hid_stick_value(-32768, 32767, 16, 20688, kStickDeclared, true) == -80);

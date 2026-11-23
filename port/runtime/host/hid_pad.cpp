@@ -230,8 +230,9 @@ int8_t hid_stick_value(long logical_min, long logical_max, int bits, unsigned lo
   // DInput: +20688 up, -20432 down, 0 at rest): that byte, exactly. Scaling from the middle of the range put
   // rest half a step below zero, which the flipped axis rounded down to -1: a stick at rest read 0.0125
   // (player report 11-22).
-  if (bits >= 8 && (encoding == kStickTwos ? logical_min >= 0 || (logical_min == -half && logical_max == half - 1)
-                                           : encoding == kStickDeclared && logical_min == -half && logical_max == half - 1)) {
+  // The declared range may stop one short of the field's lowest value (-32767..32767): the same data.
+  const bool whole_signed = logical_max == half - 1 && (logical_min == -half || logical_min == -(half - 1));
+  if (bits >= 8 && (encoding == kStickTwos ? logical_min >= 0 || whole_signed : encoding == kStickDeclared && whole_signed)) {
     const long s = u >= (unsigned long)half ? (long)u - (half << 1) : (long)u;
     long v = s >= 0 ? s >> (bits - 8) : -((-s + (1l << (bits - 8)) - 1) >> (bits - 8));   // floor, whatever >> does to a negative
     if (flip) v = -v;
