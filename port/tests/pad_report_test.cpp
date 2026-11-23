@@ -96,6 +96,12 @@ void check_triggers() {
   CHECK(host::hid_trigger_rest(0, 255, 0) == host::kTriggerRestMin);
   CHECK(host::hid_trigger_value(0, 255, 0, host::kTriggerRestMin) == 0);
   CHECK(host::hid_trigger_value(0, 255, 255, host::kTriggerRestMin) == 255);
+  CHECK(host::hid_trigger_value(0, 255, 49, host::kTriggerRestMin) == 49);
+  // A B0XX r2 in DInput (-32767..32767): rest, light shield, mid shield as the bytes Dolphin makes of them.
+  CHECK(host::hid_trigger_value(-32767, 32767, 40735 - 65536, host::kTriggerRestMin) == 30);
+  CHECK(host::hid_trigger_value(-32767, 32767, 53328 - 65536, host::kTriggerRestMin) == 79);
+  CHECK(host::hid_trigger_value(-32767, 32767, 64893 - 65536, host::kTriggerRestMin) == 124);
+  CHECK(host::hid_trigger_value(-32767, 32767, 32767, host::kTriggerRestMin) == 255);
   // vJoy's Z with nothing writing it: 16384 of 0..32767. Released there, fully pressed at the top.
   const int8_t vjoy = host::hid_trigger_rest(0, 32767, 16384);
   CHECK(vjoy == host::kTriggerRestCentre);

@@ -11864,7 +11864,7 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
               char label[96];
               if (r == wait_role) std::snprintf(label, sizeof label, "%s##axisrole%d", role_asks[r], r);
               else std::snprintf(label, sizeof label, "%s: %s##axisrole%d", role_names[r],
-                                 axis == host::kHidAxisAuto ? "Automatic" : host::hidpad_axis_name(axis), r);
+                                 axis == host::kHidAxisAuto ? "Automatic" : host::hidpad_axis_name(tab_index, axis), r);
               if (r % 2) ImGui::SameLine();
               if (settings_widgets::Button(label)) {
                 if (r == wait_role) wait_role = -1;

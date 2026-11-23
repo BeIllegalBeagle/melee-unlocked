@@ -168,6 +168,6 @@ int hidpad_axis_capture_poll(int slot);
 // expected to be held where the capture found it: right or up for a stick, which sets or clears that
 // direction's invert switch so the push reads the way it was made; a trigger rests where the capture began.
 void hidpad_assign_axis(int slot, int role, int axis);
-const char* hidpad_axis_name(int axis);
+const char* hidpad_axis_name(int slot, int axis);
 
 }  // namespace host

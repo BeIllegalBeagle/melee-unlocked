@@ -57,6 +57,7 @@ struct Slot {
   int axis_count = 0;
   USAGE button_min = 0, button_max = 0;
   bool haybox = false;                 // HayBox DInput (haybox_dinput_shape): triggers on Z and Rz
+  bool sim_triggers = false;           // its triggers are Simulation Controls fields (describe)
   bool frame1 = false;                 // Frame1 firmware in DInput mode (frame1_dinput_name in hid_pad.h)
   // Every Slider field by its data index, in report order: a Frame1 has two (L, R), which one usage
   // lookup cannot tell apart.
@@ -200,7 +201,9 @@ bool describe(Slot& s, HANDLE device) {
   // Two sticks and nothing else among the usual axes, plus exactly two Simulation Controls fields: those
   // are the box's analog triggers (a B0XX r2 in DInput mode: 16 report bytes, of which X Y Rx Ry and the
   // buttons explain 12; its light shield buttons did nothing and could not be bound, 11-23). They take the
-  // slider's place (L) and Z's (R), in report order; Controls > Box layouts swaps them if that is wrong.
+  // slider's place and Z's, in report order. On that box both carry the same value, the L trigger's (its
+  // light and mid shield buttons modify L), so only the first is read by itself, as L; the other can be
+  // given to R under Controls > Box layouts.
   s.fields.clear();
   int sim[2] = {-1, -1}, sim_count = 0;
   for (USHORT v = 0; v < value_count; ++v) {
@@ -226,6 +229,7 @@ bool describe(Slot& s, HANDLE device) {
       if (a.logical_max <= a.logical_min) { a.logical_min = 0; a.logical_max = (LONG)((1u << std::min<USHORT>(c.BitSize, 31)) - 1); }
       ++s.axis_count;
     }
+    s.sim_triggers = true;
   }
   // Something with no axes and no buttons is not a pad, whatever it says it is.
   return s.axis_count > 0 || s.button_max >= s.button_min;
@@ -325,7 +329,10 @@ uint8_t hid_trigger_value(long logical_min, long logical_max, long raw, int8_t r
     case kTriggerRestMax:    t = (hi - (double)raw) / (hi - lo); break;                         // pulled toward the minimum
     default:                 t = ((double)raw - lo) / (hi - lo); break;
   }
-  return (uint8_t)std::clamp((int)std::lround(t * 255.0), 0, 255);
+  // Cut off, not rounded, as Dolphin does when it turns an axis into the controller's byte: a B0XX r2 in
+  // DInput sends 30, 79 and 124 that way (rest, light shield, mid shield; the game takes 30 off: 0, 49, 94).
+  // Rounded they were 31, 80 and 125, one too many on each (player report 11-23).
+  return (uint8_t)std::clamp((int)std::floor(t * 255.0 + 1e-9), 0, 255);
 }
 
 void hidpad_device_removed(void* device_handle) {
@@ -517,7 +524,7 @@ bool hidpad_raw_input(void* device_handle, const uint8_t* report, uint32_t size,
   // HayBox DInput: Z is the left trigger, Rz the right (TUGamepad's report). Any other pad: the slider
   // is the left one, and Z the right one when Rx/Ry carry the C-stick. The player's own choice comes first.
   const int trig_l = hid_role_axis(roles, HID_ROLE_TRIGGER_L, s.haybox ? 2 : s.axes[6].present ? 6 : -1, present);
-  const int trig_r = hid_role_axis(roles, HID_ROLE_TRIGGER_R, s.haybox ? 5 : rxry && s.axes[2].present ? 2 : -1, present);
+  const int trig_r = hid_role_axis(roles, HID_ROLE_TRIGGER_R, s.haybox ? 5 : rxry && s.axes[2].present && !s.sim_triggers ? 2 : -1, present);
   if (trig_l >= 0 && read_axis(trig_l, value)) pad.trig_l = trigger(trig_l, value);
   if (trig_r >= 0 && read_axis(trig_r, value)) pad.trig_r = trigger(trig_r, value);
   }
@@ -652,7 +659,13 @@ void hidpad_assign_axis(int slot, int role, int axis) {
   host::log("hid pad %d: role %d set to axis %s%s", slot + 1, role, axis_name(ax.usage), read < 0 ? ", inverted" : "");
 }
 
-const char* hidpad_axis_name(int axis) { return axis >= 0 && axis < 8 ? axis_name(kAxisOrder[axis]) : ""; }
+const char* hidpad_axis_name(int slot, int axis) {
+  if (axis < 0 || axis >= 8) return "";
+  std::lock_guard<std::mutex> lock(g_mutex);
+  // The field that is really there (a box's Rudder in Z's place), else the usual name of that place.
+  if (slot >= 0 && slot < kHidPadSlots && g_slots[slot].ready && g_slots[slot].axes[axis].present) return axis_name(g_slots[slot].axes[axis].usage);
+  return axis_name(kAxisOrder[axis]);
+}
 
 HidPadAxes hidpad_axes(int slot) {
   HidPadAxes out{};
