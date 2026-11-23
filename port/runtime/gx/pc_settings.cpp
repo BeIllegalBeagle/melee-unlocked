@@ -439,19 +439,9 @@ bool g_code_tag_arrow = false;
 // (host API 24), in the game's font. Nana's percent: under each Ice Climbers player's damage, while
 // Nana is in play. Ally markers (online, as the code has them): YOU over your own fighter, a heart
 // over your teammate in a teams match.
-// Where a name tag's plate is: its centre above the tag's point, in 480 units (the game's own tag
-// plate, the same place the pro tag's robot uses).
-static constexpr float kOwnTagPlateDy = -29.5f;
 static void draw_community_code_overlays() {
-  // MELEE_TEST_OWN_TAG=<port 1-4>,<text> (hidden runs only): that port is "you" with that tag, offline,
-  // to look at the tag a player's own tag code shows.
-  static const std::pair<int, std::string> test_tag = [] {
-    const char* v = host::test_env::getenv("MELEE_TEST_OWN_TAG");
-    if (!v || v[0] < '1' || v[0] > '4' || v[1] != ',') return std::pair<int, std::string>(-1, std::string());
-    return std::pair<int, std::string>(v[0] - '1', std::string(v + 2));
-  }();
   const uint32_t codes = host::g_community_codes.load(std::memory_order_relaxed) |
-                         (g_code_tag_on.load(std::memory_order_relaxed) || test_tag.first >= 0 ? MU_DISPLAY_OPTION_ALLY_INDICATORS : 0u);
+                         (g_code_tag_on.load(std::memory_order_relaxed) ? MU_DISPLAY_OPTION_ALLY_INDICATORS : 0u);
   if (!g_hud_match || !(codes & (MU_DISPLAY_OPTION_NANA_PERCENT | MU_DISPLAY_OPTION_ALLY_INDICATORS))) return;
   const OverlayBounds bounds = overlay_bounds();
   const float width = bounds.right - bounds.left, height = bounds.bottom - bounds.top;
@@ -478,7 +468,7 @@ static void draw_community_code_overlays() {
       practice_menu::text(draw, x, y, px, IM_COL32(255, 255, 255, 235), label, 0.0f, true);
     }
   }
-  const int me = test_tag.first >= 0 ? test_tag.first : slippi::online::is_online_match() ? slippi::online::local_player_index() : -1;
+  const int me = slippi::online::is_online_match() ? slippi::online::local_player_index() : -1;
   if ((codes & MU_DISPLAY_OPTION_ALLY_INDICATORS) && me >= 0 && me < 4) {
     const float px = std::clamp(height / 26.0f, 14.0f, 34.0f);
     for (int slot = 0; slot < 4; ++slot) {
@@ -492,29 +482,16 @@ static void draw_community_code_overlays() {
       bool arrow = false;
       {
         std::lock_guard<std::mutex> lock(g_code_tag_mutex);
-        own_text = test_tag.first >= 0 ? test_tag.second : g_code_tag_text;
-        arrow = test_tag.first >= 0 ? false : g_code_tag_arrow;
+        own_text = g_code_tag_text;
+        arrow = g_code_tag_arrow;
       }
       if (mine && arrow) {   // a pointer down at the fighter, with a dark edge like the letters
         const float s = px * 0.55f, top = y + px * 0.15f;
         draw->AddTriangleFilled(ImVec2(cx - s - 1.5f, top - 1.5f), ImVec2(cx + s + 1.5f, top - 1.5f),
                                 ImVec2(cx, top + s * 1.3f + 2.0f), IM_COL32(0, 0, 0, 200));
         draw->AddTriangleFilled(ImVec2(cx - s, top), ImVec2(cx + s, top), ImVec2(cx, top + s * 1.3f), colors[slot]);
-      } else if (mine && !own_text.empty()) {
-        // A name of the player's own (ImpX's code says "ImpX"): shown as Slippi does, as a name tag in
-        // place of the port's "P2", white letters on the tag's dark plate. Drawn as the port's letters
-        // over "P2" they were both on screen at once (11-23). The plate sits where those letters are
-        // (the game's own tag plate, 29.5 units above the tag's point) and covers them.
-        const float tag_px = std::clamp(height / 30.0f, 12.0f, 30.0f);
-        const float w = practice_menu::text_width(tag_px, own_text.c_str());
-        const float cy = bounds.top + (p.tag_y + kOwnTagPlateDy) / 480.0f * height;
-        const float half_h = tag_px * 0.68f, pad = tag_px * 0.35f;
-        draw->AddRectFilled(ImVec2(cx - w * 0.5f - pad, cy - half_h), ImVec2(cx + w * 0.5f + pad, cy + half_h),
-                            IM_COL32(16, 16, 24, 232), tag_px * 0.12f);
-        practice_menu::text(draw, cx - w * 0.5f, cy - tag_px * 0.5f, tag_px, IM_COL32(255, 255, 255, 255),
-                            own_text.c_str(), 0.0f, false);
       } else if (mine) {
-        const char* label = "YOU";
+        const char* label = own_text.empty() ? "YOU" : own_text.c_str();
         const float w = practice_menu::text_width(px, label);
         practice_menu::text(draw, cx - w * 0.5f, y, px, colors[slot], label, 0.0f, true);
       } else {   // a heart: two circles over a point
