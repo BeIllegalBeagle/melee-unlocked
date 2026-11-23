@@ -163,7 +163,7 @@ inline bool graft_visuals(const std::vector<uint8_t>& clean, const std::vector<u
     };
     size_t next = 0;
     const bool child_tail = tail && !a.pointers.count(ja + 12);
-    for (uint32_t x : ca) {
+    for (const uint32_t& x : ca) {   // by reference: its index is used below
       uint32_t match = 0;
       // Prefer an exact flag match. Exporters also change transform/visibility
       // flags while retaining the same local transform; grafting never copies
@@ -173,6 +173,15 @@ inline bool graft_visuals(const std::vector<uint8_t>& clean, const std::vector<u
           if (!used[k] && (pass < 2 ? same(x, cb[k], pass == 0) : near(x, cb[k]))) {
             match = cb[k]; used[k] = true; next = k + 1; break;
           }
+      // The same place in a branch of the same shape: a skin that moved a joint further than `near`
+      // allows (a custom Onett lowered two groups by 7 units, 11-23) still sits on it. The grafted file
+      // keeps the original's transform, so its mesh is drawn where the original's is, over the
+      // original's gameplay; only the sibling counts and the non-drawing flags have to agree.
+      const size_t index = size_t(&x - ca.data());
+      if (!match && ca.size() == cb.size() && index >= next && !used[index] &&
+          ((a.get(x + 4) & ~kDrawFlags) == (b.get(cb[index] + 4) & ~kDrawFlags))) {
+        match = cb[index]; used[index] = true; next = index + 1;
+      }
       walk(x, match, depth + 1, child_tail);
     }
   };
