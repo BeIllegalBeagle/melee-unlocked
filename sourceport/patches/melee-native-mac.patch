@@ -240,6 +240,17 @@
          HSD_GObjObject_80390A70(gobj, HSD_GObj_JObjKind, jobj);
          GObj_SetupGXLink(gobj, HSD_GObj_JObjCallback, 4, 0x80);
      }
+--- a/src/sysdolphin/baselib/aobj.c
++++ b/src/sysdolphin/baselib/aobj.c
+@@ -209,7 +209,7 @@
+         fobjdesc = DP(aobjdesc->fobjdesc);
+         fobj = HSD_FObjLoadDesc(fobjdesc);
+         HSD_AObjSetFObj(aobj, fobj);
+-        id = aobjdesc->obj_id;
++        id = (HSD_IDKey) MU_WIDEN(aobjdesc->obj_id); /* the ID table holds native addresses */
+         if (id != 0U) {
+             HSD_Obj* hsd_obj = HSD_IDGetDataFromTable(0, id, 0);
+             phi_r30 = hsd_obj;
 --- a/src/sysdolphin/baselib/card.c
 +++ b/src/sysdolphin/baselib/card.c
 @@ -194,8 +194,8 @@
