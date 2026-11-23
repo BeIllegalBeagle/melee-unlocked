@@ -1,6 +1,6 @@
 """Unsigned M3 app; package existing inputs only, never fetch/build game or dependencies."""
 from pathlib import Path
-from build_full import GAME_LIBRARY, build_dir
+from build_full import GAME_LIBRARY, arch_env, build_dir
 import argparse, hashlib, json, os, plistlib, runpy, shutil, subprocess, sys
 ROOT = Path(__file__).resolve().parents[2]
 BUILD = ROOT/'build-mac-full'
@@ -108,7 +108,11 @@ def main():
     info = dict(CFBundleIdentifier='co.yougame.meleeunlocked', CFBundleName='Melee Unlocked',
                 CFBundleDisplayName='Melee Unlocked - Experimental', CFBundleExecutable='MeleeUnlocked',
                 CFBundlePackageType='APPL',CFBundleShortVersionString=version, CFBundleVersion=version,
-                LSMinimumSystemVersion='15.0',LSArchitecturePriority=['x86_64'],
+                LSMinimumSystemVersion='15.0',LSArchitecturePriority=[arch_env()],
+                # The games category and LSSupportsGameMode let macOS turn on Game Mode when the
+                # window is full screen: the game gets CPU and GPU priority and controllers and
+                # AirPods get lower Bluetooth latency.
+                LSApplicationCategoryType='public.app-category.games',LSSupportsGameMode=True,
                 NSHighResolutionCapable=True,NSPrincipalClass='NSApplication')
     with (contents/'Info.plist').open('wb') as f:
         plistlib.dump(info,f)
