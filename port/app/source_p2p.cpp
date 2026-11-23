@@ -454,15 +454,24 @@ void start(bool harness) {
   // Late controller read (host/late_read.h): MELEE_ONLINE_LATE_READ=0 turns it off. Tests:
   // MELEE_TEST_LATE_READ=1 takes it whatever the ping, MELEE_TEST_LATE_HOLD_MS fixes the wait.
   static host::late_read::Control late_control;
+  static bool late_soured = false;   // a game played this way went badly: not offered again in this session
   static const bool late_on = [] { const char* v = std::getenv("MELEE_ONLINE_LATE_READ"); return !(v && *v == '0'); }();
   if (late_on) {
     callbacks.late_offer = [](int delay, uint32_t ping_us) {
       static const bool forced = [] { const char* v = host::test_env::getenv("MELEE_TEST_LATE_READ"); return v && *v == '1'; }();
+      if (late_soured) return false;
       return forced || (ping_us > 0 && host::late_read::has_room(delay, (double)ping_us / 1000.0));
     };
     callbacks.late_hold = [](int32_t frame, bool have_early, double early_ms) {
       static const double fixed = [] { const char* v = host::test_env::getenv("MELEE_TEST_LATE_HOLD_MS"); return v && *v ? std::atof(v) : -1.0; }();
-      if (frame <= 1) late_control.reset();   // a new game
+      if (frame <= 1) {   // a new game
+        if (late_control.went_badly() && !late_soured) {
+          late_soured = true;
+          host::log("p2p: late controller read: not offered again in this session (%llu pads came after their frame had started, %llu of %llu frames had no room for the wait)",
+                    (unsigned long long)late_control.late_arrivals(), (unsigned long long)late_control.short_frames(), (unsigned long long)late_control.frames());
+        }
+        late_control.reset();
+      }
       const double wait = late_control.step(frame, have_early, early_ms, host::last_sim_frame_work_ms(), host::last_sim_frame_late(), fixed);
       const double waited = host::tick_hold(wait / 1000.0) * 1000.0;
       late_control.note_waited(waited);

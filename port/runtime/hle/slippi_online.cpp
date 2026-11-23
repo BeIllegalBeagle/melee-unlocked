@@ -871,6 +871,7 @@ namespace late_read {
 using namespace host::late_read;
 struct Latch { const void* connection = nullptr; int base = 0; bool on = false; };
 static Latch latch;
+static const void* soured = nullptr;   // the connection a game played this way went badly on: not offered there again
 static bool engaged = false;
 static int base_delay = 0;
 static Control control;
@@ -892,6 +893,7 @@ static double fixed_hold() {
 // The delay the game is given for a chosen delay of `chosen` frames.
 static int offer(int chosen) {
   if (!enabled() || !host::game_image || chosen < 2 || !g_netplay) return chosen;
+  if (soured == g_netplay.get()) return chosen;
   if (latch.connection == g_netplay.get() && latch.base == chosen) return latch.on ? chosen - 1 : chosen;
   if (const auto lobby = yougame::friends_lobby(); lobby.open && lobby.plan && lobby.plan->ok) return chosen;   // one delay for every machine
   if (g_netplay->GetSlippiConnectStatus() != NetplayClient::ConnectStatus::CONNECTED) return chosen;
@@ -926,6 +928,11 @@ static void end() {
   if (engaged && control.frames())
     host::log("slippi: late controller read: this game waited %.1f ms a frame on average, so presses showed %.1f ms sooner than with delay %d",
               control.average_hold_ms(), control.saved_ms(), base_delay);
+  if (engaged && g_netplay && control.went_badly()) {
+    soured = g_netplay.get();
+    host::log("slippi: late controller read: not offered again to this opponent (%llu pads came after their frame had started, %llu of %llu frames had no room for the wait)",
+              (unsigned long long)control.late_arrivals(), (unsigned long long)control.short_frames(), (unsigned long long)control.frames());
+  }
   engaged = false; base_delay = 0; latch = {};
 }
 

@@ -100,8 +100,32 @@ static void test_work_and_lateness() {
   EXPECT(near(f.late_cut_ms(), 0.0));
 }
 
+static void test_a_game_that_went_badly() {
+  // A steady connection on a computer with room: nothing to hold against the next game.
+  Control good;
+  int frame = 1;
+  run(good, frame, 1800, 2.0);
+  EXPECT(!good.went_badly() && good.late_arrivals() == 0 && good.short_frames() == 0);
+  // One late pad every second: the wait climbs to its limit and the pads still come after the frame started.
+  Control jitter;
+  frame = 1;
+  for (int i = 0; i < 1800; ++i, ++frame) jitter.note_waited(jitter.step(frame, true, i % 60 == 0 ? -30.0 : 2.0, 3.0, false));
+  EXPECT(jitter.late_arrivals() >= 25 && jitter.went_badly());
+  // A computer whose frames take 12 ms has no room for the wait a 30 ms ping needs.
+  Control slow;
+  frame = 1;
+  run(slow, frame, 1800, -1.0, 12.0);
+  EXPECT(slow.short_frames() > 1000 && slow.went_badly());
+  // Too short a game says nothing.
+  Control brief;
+  frame = 1;
+  run(brief, frame, 300, -1.0, 12.0);
+  EXPECT(!brief.went_badly());
+}
+
 int main() {
   test_room();
+  test_a_game_that_went_badly();
   test_wait_follows_the_arrivals();
   test_wait_never_moves_fast();
   test_work_and_lateness();

@@ -63,6 +63,13 @@ class LateReadWiringTest(unittest.TestCase):
         self.assertIn("sim_cost_add(SIM_WAIT, waited);", body)
         self.assertIn("const auto deadline = g_next_frame + std::chrono::microseconds((long long)(seconds * 1e6));", body)
 
+    def test_a_game_that_went_badly_is_not_repeated_on_that_connection(self):
+        self.assertIn("if (soured == g_netplay.get()) return chosen;", self.block)
+        self.assertIn("if (engaged && g_netplay && control.went_badly()) {", self.block)
+        self.assertIn("return frames_ >= 600 && (late_arrivals_ * 600 > 6 * frames_ || short_frames_ * 10 > frames_);", self.control)
+        p2p = source("port/app/source_p2p.cpp")
+        self.assertIn("if (late_soured) return false;", p2p)
+
     def test_remote_pad_arrival_is_kept(self):
         net = source("port/runtime/hle/slippi_net.cpp")
         self.assertIn("if (frame > remote_arrival_[pidx].frame) remote_arrival_[pidx] = {frame, cur_time};", net)

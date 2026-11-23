@@ -71,8 +71,26 @@ class Control {
     // Up at once when the other player's pads come later (a ms a frame), down slowly when they come sooner.
     hold_ = target > hold_ ? std::min(target, hold_ + 1.0) : std::max(target, hold_ - 0.05);
     sum_ += hold_; ++frames_;
+    if (frame >= kFirstSampleFrame) {
+      // The two ways a game played this way goes badly: the other player's pad comes after the frame
+      // started even with the wait (a guess, and a rollback if it was wrong), or this computer's own
+      // frames leave no room for the wait the connection needs.
+      if (have_early && early_ms + hold_ < 0.0) ++late_arrivals_;
+      if (early_count_ && longest < kMaxHoldMs && kGuardMs - least_early_ > longest + 0.5) ++short_frames_;
+    }
     return hold_;
   }
+
+  // Whether this game showed that the connection or this computer does not suit the late read: more
+  // than six late pads in ten seconds on average, or the wait cut short by slow frames a tenth of the
+  // time. The delay cannot change during a game, so the answer is for the next one: it is not offered
+  // again to this opponent. Measured 11-22 on an overloaded PC (frames of 13 to 21 ms): 11 to 20
+  // rollbacks a game where plain delay had none.
+  bool went_badly() const {
+    return frames_ >= 600 && (late_arrivals_ * 600 > 6 * frames_ || short_frames_ * 10 > frames_);
+  }
+  uint64_t late_arrivals() const { return late_arrivals_; }
+  uint64_t short_frames() const { return short_frames_; }
 
   // How long the frame really waited (less than asked when the frame started late).
   void note_waited(double ms) { last_waited_ = ms; }
@@ -90,7 +108,7 @@ class Control {
   std::array<float, 120> work_{};    // the game thread's work per frame (two seconds)
   unsigned early_count_ = 0, work_count_ = 0;
   double hold_ = 0.0, sum_ = 0.0, least_early_ = 0.0, work_now_ = 0.0, late_cut_ = 0.0, last_waited_ = 0.0;
-  uint64_t frames_ = 0;
+  uint64_t frames_ = 0, late_arrivals_ = 0, short_frames_ = 0;
 };
 
 }  // namespace host::late_read
