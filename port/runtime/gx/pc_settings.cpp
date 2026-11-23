@@ -957,7 +957,9 @@ static void draw_input_overlay(int port, int row, bool lone, bool editable, bool
     auto text = [&](float x, int8_t sx, int8_t sy, ImU32 colour) {
       float fx = sx / 80.f, fy = sy / 80.f;
       const float mag = std::sqrt(fx * fx + fy * fy);
-      if (mag > 1.f) { fx /= mag; fy /= mag; }
+      // Past the rim the game pulls the stick back to length 80 and drops the fraction (HSD_PadClamp), so
+      // a full diagonal is 56, 56: 0.7000 0.7000. Without that last step it read 0.7071 (player report 11-23).
+      if (mag > 1.f) { fx = std::trunc(fx / mag * 80.f) / 80.f; fy = std::trunc(fy / mag * 80.f) / 80.f; }
       char s[32];
       std::snprintf(s, sizeof s, "%.4f %.4f", fx, fy);
       dl->AddText(ImGui::GetFont(), ImGui::GetFontSize() * k, P(x, 134), colour, s);
