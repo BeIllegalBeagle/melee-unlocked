@@ -28,10 +28,13 @@ class LateReadWiringTest(unittest.TestCase):
 
     def test_needs_a_ping_with_room(self):
         self.assertIn("if (ping <= 0) return chosen;", self.block)
-        self.assertIn("on = has_room(chosen, ping);", self.block)
+        self.assertIn("on = has_room(chosen, ping, work);", self.block)
+        self.assertIn("const double work = host::recent_sim_frame_work_ms();", self.block)
+        self.assertIn("host::late_read::has_room(delay, (double)ping_us / 1000.0, host::recent_sim_frame_work_ms())",
+                      source("port/app/source_p2p.cpp"))
         self.assertIn("if (!on && !measured) return chosen;", self.block)
         self.assertIn("const double needed = kGuardMs - ((chosen_delay - 1) * kFrameMs - ping_ms / 2.0);", self.control)
-        self.assertIn("return chosen_delay >= 2 && needed <= kMaxHoldMs - kRoomReserveMs;", self.control)
+        self.assertIn("return chosen_delay >= 2 && needed <= longest - kRoomReserveMs;", self.control)
 
     def test_engaged_only_when_the_game_took_the_lower_delay(self):
         self.assertIn("engaged = enabled() && host::game_image && g_netplay && chosen >= 2 && delay == chosen - 1;", self.block)

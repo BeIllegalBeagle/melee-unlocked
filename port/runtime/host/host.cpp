@@ -45,6 +45,7 @@
 #include "gecko_data.h"
 #include "render_options.h"
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <chrono>
 #include <cmath>
@@ -3405,6 +3406,23 @@ void report_sim_work() {
 }
 double last_sim_frame_work_ms() { return g_last_sim_work_ms; }
 bool last_sim_frame_late() { return g_last_sim_late; }
+// The game thread's work over the last two seconds, menus included, for the online late read's
+// offer: a computer whose frames leave no room for the wait must not start a match that way.
+static std::array<std::atomic<float>, 120> g_recent_work{};
+static std::atomic<unsigned> g_recent_work_count{0};
+static void note_recent_work(double ms) {
+  const unsigned n = g_recent_work_count.load(std::memory_order_relaxed);
+  g_recent_work[n % g_recent_work.size()].store((float)ms, std::memory_order_relaxed);
+  g_recent_work_count.store(n + 1, std::memory_order_relaxed);
+}
+double recent_sim_frame_work_ms() {
+  const unsigned have = std::min<unsigned>(g_recent_work_count.load(std::memory_order_relaxed), (unsigned)g_recent_work.size());
+  if (!have) return 0.0;
+  std::array<float, 120> sorted{};
+  for (unsigned i = 0; i < have; ++i) sorted[i] = g_recent_work[i].load(std::memory_order_relaxed);
+  std::sort(sorted.begin(), sorted.begin() + have);
+  return sorted[std::min(have - 1, have * 19 / 20)];   // what 19 of 20 frames needed
+}
 
 // MELEE_TEST_EARLY_RNG_SEED="<seed>@<retrace>" (M4 diagnostic, off by default): the recompiled
 // game's seed is written through HSD_RandSeedPtr at the start of that retrace, before the VI
@@ -3722,6 +3740,7 @@ void retrace() {
     if (g_sim_frame_start > 0.0) {
       g_last_sim_ms = (now - g_sim_frame_start) * 1000.0;
       g_last_sim_work_ms = g_last_sim_ms - g_sim_costs[SIM_WAIT] * 1000.0;
+      note_recent_work(g_last_sim_work_ms);
       g_sim_ms_window += g_last_sim_ms;
       if (g_last_sim_ms > g_sim_ms_worst) g_sim_ms_worst = g_last_sim_ms;
       if (g_last_sim_ms > 20.0) {

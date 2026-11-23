@@ -460,7 +460,7 @@ void start(bool harness) {
     callbacks.late_offer = [](int delay, uint32_t ping_us) {
       static const bool forced = [] { const char* v = host::test_env::getenv("MELEE_TEST_LATE_READ"); return v && *v == '1'; }();
       if (late_soured) return false;
-      return forced || (ping_us > 0 && host::late_read::has_room(delay, (double)ping_us / 1000.0));
+      return forced || (ping_us > 0 && host::late_read::has_room(delay, (double)ping_us / 1000.0, host::recent_sim_frame_work_ms()));
     };
     callbacks.late_hold = [](int32_t frame, bool have_early, double early_ms) {
       static const double fixed = [] { const char* v = host::test_env::getenv("MELEE_TEST_LATE_HOLD_MS"); return v && *v ? std::atof(v) : -1.0; }();

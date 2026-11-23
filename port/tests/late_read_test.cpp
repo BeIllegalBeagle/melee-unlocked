@@ -30,6 +30,11 @@ static void test_room() {
   EXPECT(!has_room(2, 50.0));
   EXPECT(has_room(3, 65.0));       // auto delay's 3 frames at 65 ms: one frame less and 5 to 6 ms of wait
   EXPECT(!has_room(3, 80.0));
+  // This computer's frame work: a normal PC (1 to 3 ms) gets the same answers, a busy one none.
+  EXPECT(has_room(2, 20.0, 3.0) && has_room(2, 33.0, 3.0) && has_room(3, 65.0, 3.0));
+  EXPECT(has_room(2, 20.0, 12.0));
+  EXPECT(!has_room(2, 20.0, 13.0));   // measured 11-23: frames of 13 ms and up, the wait never fit
+  EXPECT(!has_room(2, 33.0, 7.0));    // a longer ping needs a longer wait: less work fits beside it
 }
 
 static void test_wait_follows_the_arrivals() {

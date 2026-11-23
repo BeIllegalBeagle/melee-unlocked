@@ -31,9 +31,14 @@ constexpr int32_t kFirstSampleFrame = 60;   // the two games are put in step on 
 // the other player's pads the guard early must stay well under the longest wait, because a wait at
 // its limit leaves those pads less time than the chosen delay did (measured: 36 ms ping at delay 2
 // sat at the limit and rolled back 30 times a game, 30 ms ping needed 5 to 7 ms and never did).
-inline bool has_room(int chosen_delay, double ping_ms) {
+// `work_ms` is this computer's frame work just before the match (what 19 of 20 recent frames needed):
+// the wait cannot be longer than the frame leaves after the work, so a busy computer has no room
+// either. Measured 11-23 on a PC at full load from other programs: the wait never fit (0.0 ms on
+// average), 51 and 85 rollbacks a game against 6 to 25 with the chosen delay.
+inline bool has_room(int chosen_delay, double ping_ms, double work_ms = 0.0) {
   const double needed = kGuardMs - ((chosen_delay - 1) * kFrameMs - ping_ms / 2.0);
-  return chosen_delay >= 2 && needed <= kMaxHoldMs - kRoomReserveMs;
+  const double longest = std::min(kMaxHoldMs, kFrameMs - kWorkSpareMs - work_ms);
+  return chosen_delay >= 2 && needed <= longest - kRoomReserveMs;
 }
 
 class Control {

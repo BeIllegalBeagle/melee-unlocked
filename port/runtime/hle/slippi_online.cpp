@@ -906,9 +906,16 @@ static int offer(int chosen) {
   const bool measured = match_ping > 0 || prematch_ping > 0;
   const int ping = match_ping > 0 ? match_ping : prematch_ping > 0 ? prematch_ping : g_netplay->ConnectionPingMs();
   bool on = forced();
+  const double work = host::recent_sim_frame_work_ms();
   if (!on) {
     if (ping <= 0) return chosen;   // no ping yet: the chosen delay as it is
-    on = has_room(chosen, ping);
+    on = has_room(chosen, ping, work);
+    // A busy computer is not a final "no" either: the next ask looks again, the match takes one answer.
+    if (!on && has_room(chosen, ping)) {
+      static unsigned busy_logged = 0;
+      if (busy_logged++ % 300 == 0) host::log("slippi: late controller read: not now, frames need %.1f ms of work (ping %d ms)", work, ping);
+      return chosen;
+    }
   }
   // The connection's own estimate starts high and comes down: a "no" from it is not final, the next
   // ask looks again (the game takes the delay once, when the match starts).
