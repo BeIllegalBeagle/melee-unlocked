@@ -9893,7 +9893,9 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
           bool in_pick = pack.random;
           const std::string label = pack.name + ": " + std::to_string(pack.skins) +
               (pack.skins == 1 ? " stage skin" : " stage skins") + " for " + std::to_string(pack.stages) +
-              (pack.stages == 1 ? " stage" : " stages") + ", in the random pick";
+              (pack.stages == 1 ? " stage" : " stages") +
+              // What the box does now, not what ticking it would do: an unticked pack said "in the random pick" (11-23).
+              (in_pick ? ", in the random pick" : ", left out of the random pick");
           if (settings_checkbox(label.c_str(), &in_pick)) {
             std::string error;
             mod_message = host::cosmetics::set_stage_pack_random(pack.key, in_pick, &error) ?
