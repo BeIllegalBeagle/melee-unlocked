@@ -578,8 +578,7 @@ int main(int argc, char** argv) {
     const auto load = [](const char* path) { std::ifstream f(path, std::ios::binary); std::vector<uint8_t> v((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>()); return v; };
     std::string detail;
     const bool ok = host::cosmetics::file_textures_only(load(argv[2]), load(argv[3]), &detail);
-    std::printf("%s: %s
-", ok ? "textures only" : "more than textures", detail.c_str());
+    std::printf("%s: %s\n", ok ? "textures only" : "more than textures", detail.c_str());
     return ok ? 0 : 1;
   }
   if (argc == 5 && std::string(argv[1]) == "--stage") {
