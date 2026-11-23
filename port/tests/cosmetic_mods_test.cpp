@@ -577,8 +577,7 @@ int main(int argc, char** argv) {
     const auto load = [](const char* path) { std::ifstream f(path, std::ios::binary); std::vector<uint8_t> v((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>()); return v; };
     std::vector<uint8_t> online; std::string detail;
     const bool ok = host::cosmetics::stage_online_form(load(argv[2]), load(argv[3]), &online, &detail, argv[4]);
-    std::printf("%s (%zu bytes online): %s
-", ok ? "online" : "offline", online.size(), detail.c_str());
+    std::printf("%s (%zu bytes online): %s\n", ok ? "online" : "offline", online.size(), detail.c_str());
     return ok ? 0 : 1;
   }
   test_fighter_sound_overlay();
