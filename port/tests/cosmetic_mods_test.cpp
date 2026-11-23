@@ -571,6 +571,16 @@ std::vector<uint8_t> audio_fst(const std::string& bank, uint32_t jp_start, uint3
 }
 
 int main(int argc, char** argv) {
+  // A probe for a stage file pair (an original and a pack's copy): the full online verdict, then exit.
+  // Usage: port_cosmetic_mods_test --stage <original> <skin> <disc file name>
+  if (argc == 5 && std::string(argv[1]) == "--stage") {
+    const auto load = [](const char* path) { std::ifstream f(path, std::ios::binary); return std::vector<uint8_t>(std::istreambuf_iterator<char>(f), {}); };
+    std::vector<uint8_t> online; std::string detail;
+    const bool ok = host::cosmetics::stage_online_form(load(argv[2]), load(argv[3]), &online, &detail, argv[4]);
+    std::printf("%s (%zu bytes online): %s
+", ok ? "online" : "offline", online.size(), detail.c_str());
+    return ok ? 0 : 1;
+  }
   test_fighter_sound_overlay();
   wchar_t temp_root[MAX_PATH]; GetTempPathW(MAX_PATH, temp_root);
   fs::path folder = fs::path(temp_root) /
