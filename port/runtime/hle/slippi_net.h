@@ -650,6 +650,9 @@ class Matchmaking {
   void FindMatch(MatchSearchSettings settings);
   // This search's own local port (arena room links), instead of forced_port or a random one.
   void SetLocalPort(uint16_t port) { port_override_ = port; }
+  // An arena room's link or pair search (slippi_online arena_matchmaking): never the match a room's frozen
+  // setup is for, so its connection is a plain one.
+  void SetRoomLink(bool on) { room_link_ = on; }
   ProcessState GetMatchmakeState() const { return state_; }
   std::string GetErrorMessage() const { std::lock_guard<std::mutex> lk(result_mutex_); return error_msg_; }
   bool IsSearching() const { return state_ == INITIALIZING || state_ == MATCHMAKING || state_ == OPPONENT_CONNECTING; }
@@ -745,6 +748,7 @@ class Matchmaking {
   std::unique_ptr<NetplayClient> netplay_client_;
   // Matchmaking thread only.
   int host_port_ = 0;
+  bool room_link_ = false;
   uint16_t port_override_ = 0;
   std::vector<std::string> remote_ips_;
   std::vector<std::string> remote_ips_found_;   // the same, under result_mutex_ (RemoteAddresses)

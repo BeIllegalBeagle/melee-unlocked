@@ -1800,7 +1800,7 @@ void draw_not_in_room(const Bars& b, const View& v) {
     const Ink an{Face::Bold, 15, kWhite};
     text_center(an, x + tw * .5f, line_top(an, ay + px(11), 18), "ADD PRO AI");
     const Ink ak{Face::Body, 10.5f, IM_COL32(214, 220, 234, 255)};
-    text_center(ak, x + tw * .5f, line_top(ak, ay + th - px(11) - px(16), 16), fit_name(ak, "A 3-player free-for-all", tw - px(12)));
+    text_center(ak, x + tw * .5f, line_top(ak, ay + th - px(11) - px(16), 16), fit(ak, "A 3-player free-for-all", tw - px(12)));
   }
   steel(x, y, x + tw, y + th, open ? kGold : IM_COL32(154, 166, 192, 200));
   hot(x, y, y + th, Do::AddCode);   // so the hand lands on it

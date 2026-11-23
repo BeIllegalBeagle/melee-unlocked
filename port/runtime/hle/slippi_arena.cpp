@@ -1509,6 +1509,7 @@ bool target(Target& t) {
 std::array<uint8_t, kRingMax> g_plan_member{{kNone, kNone, kNone, kNone}};      // this search's port -> member
 std::array<uint8_t, kRingMax> g_my_plan_member{{kNone, kNone, kNone, kNone}};   // the game being played's
 bool g_plan_on = false, g_my_plan = false;
+std::string g_plan_key;                  // the room state the setup was built from (games, kind, ring, Pro AI characters)
 std::vector<int> g_plan_machine_ports;   // the machines' ports, ascending (people)
 
 bool is_person(uint8_t id) { const Member* m = find(g_room, id); return m && !is_bot(*m); }
@@ -1850,9 +1851,32 @@ void steer_match() {
   const bool have_target = target(t);
   if (have_target && ring_has_bots() && !g_yg) {
     // A ring with Pro AIs plays the room's frozen setup over Direct pairings (the setup decides teams
-    // and stage).
+    // and stage). Rebuilt for every game (a rematch on the same connection too: a new seed and stage),
+    // and whenever the ring or a Pro AI's character changes.
     t.mode = Matchmaking::DIRECT;
     t.ffa = false;
+    std::string key = std::to_string(g_room.games) + "/" + std::to_string((int)g_room.kind);
+    for (int s = 0; s < kRingMax; ++s) {
+      key += "/" + std::to_string(g_room.ring[s]);
+      if (const Member* m = find(g_room, g_room.ring[s])) if (is_bot(*m)) key += ":" + std::to_string(m->character);
+    }
+    if (!g_plan_on || key != g_plan_key) {
+      std::string why;
+      auto plan = make_plan(&why);
+      if (!plan) {
+        clear_plan();
+        g_status = "Pro AI match: " + why;
+        g_next_match_ms = now_ms() + 2000;
+        return;
+      }
+      yougame::set_code_match_plan(plan);
+      event("Pro AI setup %s: %d ports, %d machines, stage %d, teams %d", plan->match_id.c_str(), plan->ports, plan->machines,
+            plan->stage, plan->rules.teams ? 1 : 0);
+      g_plan_on = true;
+      g_plan_key = key;
+    }
+  } else if (have_target) {
+    clear_plan();   // no Pro AI in this ring: a plain match
   }
   if (!have_target) {
     clear_plan();   // out of the ring: no setup of this room's for the player's next match
@@ -1909,23 +1933,7 @@ void steer_match() {
     if (now_ms() - g_test_wait_since < 20000) { g_status = "Watching the end of the last game"; return; }
   }
   g_test_wait_since = 0;
-  // A ring with Pro AIs plays the room's frozen setup over a Direct pairing (the setup decides teams and
-  // stage); without them, any setup of an earlier game is dropped.
   const bool with_bots = ring_has_bots() && !g_yg;
-  if (with_bots) {
-    std::string why;
-    auto plan = make_plan(&why);
-    if (!plan) {
-      g_status = "Pro AI match: " + why;
-      g_next_match_ms = now_ms() + 2000;
-      return;
-    }
-    yougame::set_code_match_plan(plan);
-    if (!g_plan_on) event("Pro AI setup: %d ports, %d machines, stage %d, teams %d", plan->ports, plan->machines, plan->stage, plan->rules.teams ? 1 : 0);
-    g_plan_on = true;
-  } else {
-    clear_plan();
-  }
   if (g_test.on) {
     // Test rooms: the players find each other on loopback, in ring-slot order (slot 0 decides).
     auto& lp = Matchmaking::local_peer;

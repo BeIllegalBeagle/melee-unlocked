@@ -3642,7 +3642,7 @@ void Matchmaking::handleConnecting() {
                                 !search_settings_.friend_room.empty()), search_settings_.squad_side,
       !search_settings_.friend_room.empty() && search_settings_.mode == DIRECT
 #endif
-      , lobby.open && lobby.plan && lobby.plan->ok ? lobby.plan.get() : nullptr);
+      , lobby.open && lobby.plan && lobby.plan->ok && !room_link_ ? lobby.plan.get() : nullptr);
   client->set_yougame_peer(display_provider_ == display::Provider::YouGame);
   bool handed_over = false;
   while (!handed_over) {

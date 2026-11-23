@@ -3028,7 +3028,10 @@ std::unique_ptr<Matchmaking> arena_matchmaking() {
   // Room links search on their own (not through start_find_match): they need this game's own hold on
   // Windows networking (the spectator server lets go of its own when it cannot open its port).
   if (!enet_ready()) return nullptr;
-  return g_user ? std::make_unique<Matchmaking>(g_user.get()) : nullptr;
+  if (!g_user) return nullptr;
+  auto mm = std::make_unique<Matchmaking>(g_user.get());
+  mm->SetRoomLink(true);
+  return mm;
 }
 
 bool arena_pop_from_match(std::vector<uint8_t>& out) { return g_netplay && g_netplay->PopArena(out); }
