@@ -1019,8 +1019,12 @@ void load_mod_overlay() {
   std::unordered_set<std::string> stages_missing_parts;
   for (const auto& file : g_mod_overlay.files()) {
     const auto found = g_paths.find(file.path);
+    // The .dat and its English twin (.usd), which English games load in its place.
+    const std::string& path = file.path;
+    const bool stage_file = path.rfind("/gr", 0) == 0 && path.find('/', 1) == std::string::npos && path.size() > 7 &&
+                            (path.compare(path.size() - 4, 4, ".dat") == 0 || path.compare(path.size() - 4, 4, ".usd") == 0);
     if (found == g_paths.end() || g_fst[found->second].dir || stage_stubs.count(file.path) ||
-        broken_archives.count(file.path) || !skins::is_stage_file(file.path))
+        broken_archives.count(file.path) || !stage_file)
       continue;
     const FstFile& retail = g_fst[found->second];
     if (retail.length < 0x20 || retail.length > 64u * 1024u * 1024u || file.length < 0x20 ||
