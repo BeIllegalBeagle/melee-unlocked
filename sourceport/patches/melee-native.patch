@@ -131949,7 +131949,7 @@ index e5ff149f4..6d9ac4ad2 100644
  
  bool grOnett_801E5768(Vec3* a, int b, HSD_JObj* jobj)
 diff --git a/src/melee/gr/ground.c b/src/melee/gr/ground.c
-index ad559ea8f..082892609 100644
+index ad559ea8f..9e40eacb5 100644
 --- a/src/melee/gr/ground.c
 +++ b/src/melee/gr/ground.c
 @@ -4,6 +4,10 @@
@@ -132952,7 +132952,7 @@ index ad559ea8f..082892609 100644
          void* callback;
      } r28_carrier;
      Vec3 sp10; /* compiler-managed */
-@@ -2647,25 +2867,25 @@ void Ground_801C466C(void)
+@@ -2647,25 +2867,31 @@ void Ground_801C466C(void)
      int count;
      HSD_GObj* temp_r3;
      HSD_LObj* temp_r3_2;
@@ -132979,11 +132979,17 @@ index ad559ea8f..082892609 100644
          if (callbacks->flags_b0 == 1) {
              archive = grDatFiles_801C6330(i);
 -            selected = Ground_801C20E0(archive, archive->unk4->unk8[i].x18);
++            /* Melee Unlocked: a modded stage file without this map (a custom disc's Stadium, 11-22) has no
++             * archive for it: the stage's default lights, rather than a read through a null archive. */
++            if (archive == NULL || archive->unk4 == NULL) {
++                selected = NULL;
++                goto light_selected;
++            }
 +            selected = Ground_801C20E0(archive, DP(DP(archive->unk4->unk8)[i].x18));
              goto light_selected;
          }
          callbacks++;
-@@ -2720,10 +2940,10 @@ light_selected:
+@@ -2720,10 +2946,10 @@ light_selected:
                      AOBJ_ARG_AF, 1.0);
      var_r27_2 = r28_carrier.lights;
      var_r26_2 = temp_r3_2;
@@ -132996,7 +133002,7 @@ index ad559ea8f..082892609 100644
                  if (var_r26_2->aobj != NULL) {
                      HSD_AObjSetFlags(var_r26_2->aobj, AOBJ_LOOP);
                  }
-@@ -2763,7 +2983,7 @@ HSD_GObj* Ground_801C498C(void)
+@@ -2763,7 +2989,7 @@ HSD_GObj* Ground_801C498C(void)
      return gobj;
  }
  
@@ -133005,7 +133011,7 @@ index ad559ea8f..082892609 100644
  {
      UnkArchiveStruct* archive = grDatFiles_GetArchive();
      if (stage_info.map_plit != NULL) {
-@@ -2822,7 +3042,7 @@ void Ground_801C4A08(HSD_GObj* gobj)
+@@ -2822,7 +3048,7 @@ void Ground_801C4A08(HSD_GObj* gobj)
          archive = grDatFiles_801C6330(gp->map_id);
          if (archive != NULL) {
              Ground_801C36F4(gp->map_id, jobj,
@@ -133014,7 +133020,7 @@ index ad559ea8f..082892609 100644
          }
      }
      HSD_GObjFree(gobj);
-@@ -3041,7 +3261,7 @@ void Ground_801C4FAC(HSD_CObj* cobj)
+@@ -3041,7 +3267,7 @@ void Ground_801C4FAC(HSD_CObj* cobj)
                  dz = sp2C.z;
                  dz -= sp20.z;
                  dx2 = dx * dx;
@@ -133023,7 +133029,7 @@ index ad559ea8f..082892609 100644
                  dz2 = dz * dz;
                  phi_f30 = sqrtf_store(dx2 + dy2 + dz2, &sqrt_tmp[0]);
                  if (phi_f30 < 10) {
-@@ -3227,30 +3447,24 @@ s32 Ground_801C5840(void)
+@@ -3227,30 +3453,24 @@ s32 Ground_801C5840(void)
      return stage_info.x6E4[i];
  }
  
@@ -133063,7 +133069,7 @@ index ad559ea8f..082892609 100644
  
  Item_GObj* Ground_801C58E0(s32 arg0, s32 arg1)
  {
-@@ -3263,23 +3477,13 @@ Item_GObj* Ground_801C58E0(s32 arg0, s32 arg1)
+@@ -3263,23 +3483,13 @@ Item_GObj* Ground_801C58E0(s32 arg0, s32 arg1)
      return result;
  }
  
@@ -133089,7 +133095,7 @@ index ad559ea8f..082892609 100644
      int i, j, out_idx;
      UnkArchiveStruct* archive;
      const size_t vals_count = 32;
-@@ -3290,11 +3494,11 @@ int Ground_801C5940(void)
+@@ -3290,11 +3500,11 @@ int Ground_801C5940(void)
      if (archive->unk4->unk4 == 0) {
          return -1;
      }
@@ -133103,7 +133109,7 @@ index ad559ea8f..082892609 100644
              if (val >= 220 && val < 252 && (unsigned) out_idx < vals_count) {
                  vals[out_idx] = val;
                  out_idx++;
-@@ -3341,6 +3545,13 @@ bool Ground_801C5ABC(void)
+@@ -3341,6 +3551,13 @@ bool Ground_801C5ABC(void)
  
  u32 Ground_801C5AD0(s32 i)
  {
@@ -133117,7 +133123,7 @@ index ad559ea8f..082892609 100644
      return stage_datas[i]->flags2;
  }
  
-@@ -3360,3 +3571,19 @@ void Ground_801C5AEC(Vec3* v, Vec3* arg1, Vec3* arg2, Vec3* arg3)
+@@ -3360,3 +3577,19 @@ void Ground_801C5AEC(Vec3* v, Vec3* arg1, Vec3* arg2, Vec3* arg3)
  
  /// @todo Is this used by base pointer anywhere? Not stripped by mwcc.
  static int unused_ints[] = { 1, 1, 0, 0, 0, 180, 0, 0, 0 };

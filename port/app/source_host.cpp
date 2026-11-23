@@ -492,6 +492,32 @@ bool stage_file_is_stub(const std::vector<uint8_t>& b) {
   }
   return map && !collision;
 }
+// The map parts of a stage file (map_head's table of 0x34-byte entries): for each, whether its model
+// joint is there (a pointer is there when the archive relocates it). False when the file has no
+// readable map_head.
+bool stage_map_parts(const std::vector<uint8_t>& b, std::vector<bool>* parts) {
+  auto word = [&](uint64_t at) { return (uint32_t)b[at] << 24 | (uint32_t)b[at + 1] << 16 | (uint32_t)b[at + 2] << 8 | b[at + 3]; };
+  parts->clear();
+  if (b.size() < 0x20 || word(0) != b.size()) return false;
+  const uint64_t data = word(4), relocations = word(8), roots = word(12), references = word(16);
+  const uint64_t table = 0x20 + data + relocations * 4, strings = table + (roots + references) * 8;
+  if (!roots || roots > 1024 || references > 1024 || strings > b.size()) return false;
+  uint64_t head = UINT64_MAX;
+  for (uint64_t i = 0; i < roots; ++i) {
+    const uint64_t name = strings + word(table + i * 8 + 4);
+    if (name >= b.size()) return false;
+    const char* text = (const char*)b.data() + name;
+    if (std::string(text, strnlen(text, b.size() - (size_t)name)) == "map_head") head = word(table + i * 8);
+  }
+  if (head == UINT64_MAX || 0x20 + head + 0x10 > 0x20 + data) return false;
+  const uint64_t entries = word(0x20 + head + 8), count = word(0x20 + head + 0x0C);
+  if (count > 256 || 0x20 + entries + count * 0x34 > 0x20 + data) return false;
+  std::unordered_set<uint32_t> relocated;
+  relocated.reserve((size_t)relocations);
+  for (uint64_t i = 0; i < relocations; ++i) relocated.insert(word(0x20 + data + i * 4));
+  for (uint64_t i = 0; i < count; ++i) parts->push_back(relocated.count((uint32_t)(entries + i * 0x34)) != 0);
+  return true;
+}
 slippi::online::NativeGameplayProfile g_mod_gameplay_profile = slippi::online::NativeGameplayProfile::Vanilla;
 std::string g_mod_display_name;
 
@@ -986,9 +1012,38 @@ void load_mod_overlay() {
     host::log("mods: %s in the disc is not a whole archive (header %08X, file %u bytes): the game's own file stays",
               path.c_str(), be32(own), file.length);
   }
+  // A disc stage file in place of one of the game's stages that lacks a map part the game's own file
+  // has: the stage's code makes an object for each of its parts by number, and one that is not there
+  // was a read through a null archive (a custom disc's Pokemon Stadium ended the match as it started,
+  // 1.0.7 report B-1192). The game's own stage stays for it.
+  std::unordered_set<std::string> stages_missing_parts;
+  for (const auto& file : g_mod_overlay.files()) {
+    const auto found = g_paths.find(file.path);
+    if (found == g_paths.end() || g_fst[found->second].dir || stage_stubs.count(file.path) ||
+        broken_archives.count(file.path) || !skins::is_stage_file(file.path))
+      continue;
+    const FstFile& retail = g_fst[found->second];
+    if (retail.length < 0x20 || retail.length > 64u * 1024u * 1024u || file.length < 0x20 ||
+        file.length > 64u * 1024u * 1024u)
+      continue;
+    std::vector<uint8_t> game(retail.length), own(file.length);
+    if (!host::disc_read(retail.offset, game.data(), retail.length) ||
+        g_mod_overlay.read(file.start, own.data(), file.length) != ModOverlay::Read::Success)
+      continue;
+    std::vector<bool> game_parts, own_parts;
+    if (!stage_map_parts(game, &game_parts)) continue;
+    const bool own_readable = stage_map_parts(own, &own_parts);
+    size_t missing = 0;
+    for (size_t i = 0; i < game_parts.size(); ++i)
+      if (game_parts[i] && (!own_readable || i >= own_parts.size() || !own_parts[i])) ++missing;
+    if (!missing) continue;
+    stages_missing_parts.insert(file.path);
+    host::log("mods: %s in the disc lacks %zu of the %zu map parts the game's own stage has: the game's own stage stays",
+              file.path.c_str(), missing, game_parts.size());
+  }
   uint32_t replaced = 0, added = 0, pack_kept = 0;
   for (const auto& file : g_mod_overlay.files()) {
-    if (stage_stubs.count(file.path) || broken_archives.count(file.path)) continue;
+    if (stage_stubs.count(file.path) || broken_archives.count(file.path) || stages_missing_parts.count(file.path)) continue;
     if (pack_keeps(file)) { ++pack_kept; continue; }   // retail menus, and no file that carries code
     auto found = g_paths.find(file.path);
     int32_t entry;
