@@ -41,10 +41,11 @@ if(NOT EXISTS "${D}/src/melee/gm/gmmain.c")
 endif()
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 if(MU_AARCH64)
-  # Static data gets x86-64 GCC's alignment (32 bytes for anything of 32 bytes or more), which the
-  # game relies on for its DMA buffers; see port/mac/align_like_x86.py.
-  set(CMAKE_C_COMPILER_LAUNCHER "${Python3_EXECUTABLE};${REPO}/port/mac/align_like_x86.py")
-  set(CMAKE_CXX_COMPILER_LAUNCHER "${Python3_EXECUTABLE};${REPO}/port/mac/align_like_x86.py")
+  # x86-64 GCC's float to unsigned conversions (the low bits of a signed conversion, as on the
+  # console) and its static data alignment (32 bytes for anything of 32 bytes or more), both of which
+  # the game relies on; see port/mac/aarch64_like_x86.py.
+  set(CMAKE_C_COMPILER_LAUNCHER "${Python3_EXECUTABLE};${REPO}/port/mac/aarch64_like_x86.py")
+  set(CMAKE_CXX_COMPILER_LAUNCHER "${Python3_EXECUTABLE};${REPO}/port/mac/aarch64_like_x86.py")
 endif()
 include("${REPO}/tools/rank_badges.cmake")
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -671,3 +672,16 @@ foreach(mu_target IN LISTS MU_GAME_DIRECTORY_TARGETS)
   endif()
 endforeach()
 add_custom_target(mu_game_tests DEPENDS melee_game ${MU_GAME_TEST_TARGETS})
+if(MU_AARCH64)
+  # The launcher's rewrite is part of every object, and make does not see a launcher change: make each
+  # object depend on it, so an edit to it rebuilds them.
+  foreach(mu_target IN LISTS MU_GAME_DIRECTORY_TARGETS)
+    get_target_property(mu_target_type "${mu_target}" TYPE)
+    if(NOT mu_target_type STREQUAL "INTERFACE_LIBRARY" AND NOT mu_target_type STREQUAL "UTILITY")
+      get_target_property(mu_sources "${mu_target}" SOURCES)
+      list(FILTER mu_sources EXCLUDE REGEX "^\\$<")
+      set_property(SOURCE ${mu_sources} TARGET_DIRECTORY "${mu_target}" APPEND PROPERTY
+                   OBJECT_DEPENDS "${REPO}/port/mac/aarch64_like_x86.py")
+    endif()
+  endforeach()
+endif()
