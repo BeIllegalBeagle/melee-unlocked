@@ -241,7 +241,19 @@ bool start_process(const std::vector<std::string>& argv) {
   std::vector<std::string> env_store;
   for (char** e = environ; *e; ++e)
     if (std::strncmp(*e, "YOUGAME_", 8) != 0 && std::strncmp(*e, "MELEE_YOUGAME_", 14) != 0) env_store.push_back(*e);
-  if (const std::string bridge = launcher::yougame::bridge_url(); !bridge.empty()) {
+  // This launcher signs in through the YouGame app (Connect, sign_in_app): it holds no YouGame sign-in of
+  // its own, so its bridge answers every game request "Connect YouGame in the launcher" (the launcher said
+  // Connected and the game said not signed in, with no window to sign in at: Linux report 11-22). The game
+  // goes to the app's own channel instead, as it does with the extension on; it keeps looking for the app,
+  // so Connect pressed after the game started is found too. The bridge serves only a sign-in of this
+  // launcher's own, when there is one.
+  const launcher::yougame::Account yg_account = launcher::yougame::account();
+  const bool own_sign_in = yg_account.signed_in && !yg_account.app;
+  if (!own_sign_in) {
+    env_store.push_back("MELEE_YOUGAME_EXTENSION=1");
+    std::fprintf(stderr, "yougame: the game uses the YouGame app's channel (%s)\n",
+                 yg_account.app ? "connected through the app" : "not connected yet");
+  } else if (const std::string bridge = launcher::yougame::bridge_url(); !bridge.empty()) {
     const std::string game_dir = argv[0].substr(0, argv[0].find_last_of('/'));
     launcher::yougame::set_build(g_yg_start_version.empty() ? std::string(MELEE_PORT_VERSION) : g_yg_start_version,
                                  std::wstring(argv[0].begin(), argv[0].end()),
