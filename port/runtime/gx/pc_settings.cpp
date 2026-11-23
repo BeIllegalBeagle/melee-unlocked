@@ -479,10 +479,6 @@ static void draw_community_code_overlays() {
     }
   }
   const int me = test_tag.first >= 0 ? test_tag.first : slippi::online::is_online_match() ? slippi::online::local_player_index() : -1;
-  {   // the test tag: one picture of the presented frame, overlays included (capture/ in the run folder)
-    static int shown = 0;
-    if (test_tag.first >= 0 && ++shown == 300) gx::gx_capture_request_set(1);
-  }
   if ((codes & MU_DISPLAY_OPTION_ALLY_INDICATORS) && me >= 0 && me < 4) {
     const float px = std::clamp(height / 26.0f, 14.0f, 34.0f);
     for (int slot = 0; slot < 4; ++slot) {
