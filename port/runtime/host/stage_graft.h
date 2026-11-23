@@ -70,11 +70,27 @@ inline std::set<uint32_t> visual_only_models(std::string stage_file) {
   return {};
 }
 
+// Stage models whose code reads only the root joint's place and otherwise waits on the model's own
+// animations: taken whole only when the skin's root joint and every animation slot of the model entry
+// are the original's byte for byte, so the timing and the root stay the same. Then the joints under
+// the root may sit where the skin put them.
+// Dream Land, groldpupupu.c: 7 is Whispy. His update (grOldPupupu_802113E0) reads the root's
+// translation (the side he blows to) and waits for the model's animation to end (grAnime_801C83D0);
+// no collision. A skin that sank the flower patches in his model had them back online (ImpX, 11-23).
+inline std::set<uint32_t> same_motion_models(std::string stage_file) {
+  for (char& c : stage_file) c = (char)std::tolower((unsigned char)c);
+  const size_t slash = stage_file.find_last_of("/\\");
+  if (slash != std::string::npos) stage_file = stage_file.substr(slash + 1);
+  if (stage_file == "grop.dat" || stage_file == "grop.usd") return {7};
+  return {};
+}
+
 // `out` gets the grafted file; `note` says what was done or why it could not be. False leaves `out`
 // empty: the caller serves the original stage, as before. `whole` (visual_only_models) are the
 // models taken from the skin whole instead of joint by joint.
 inline bool graft_visuals(const std::vector<uint8_t>& clean, const std::vector<uint8_t>& skin,
-                          std::vector<uint8_t>* out, std::string* note, const std::set<uint32_t>& whole = {}) {
+                          std::vector<uint8_t>* out, std::string* note, const std::set<uint32_t>& whole_in = {},
+                          const std::set<uint32_t>& same_motion = {}) {
   using namespace graft_detail;
   out->clear();
   Archive a{clean}, b{skin};
@@ -126,6 +142,25 @@ inline bool graft_visuals(const std::vector<uint8_t>& clean, const std::vector<u
   const uint32_t ha = a.roots.at("map_head"), hb = b.roots.at("map_head");
   const uint32_t count = a.get(ha + 12);
   if (count != b.get(hb + 12)) { *note = "the skin has a different number of stage models"; return false; }
+  // same_motion_models: whole only with the original's root joint and animations, byte for byte.
+  std::set<uint32_t> whole = whole_in;
+  for (uint32_t i : same_motion) {
+    if (i >= count) continue;
+    const uint32_t pa = a.get(ha + 8) + i * 52, pb = b.get(hb + 8) + i * 52;
+    if (!a.pointers.count(pa) || !b.pointers.count(pb)) continue;
+    const uint32_t ra = a.get(pa), rb = b.get(pb);
+    bool same = a.bounds(ra, 56) && b.bounds(rb, 56) && a.get(ra + 4) == b.get(rb + 4) &&
+                !std::memcmp(a.bytes.data() + 32ull + ra + 20, b.bytes.data() + 32ull + rb + 20, 36);
+    for (uint32_t k = 4; same && k < 52; k += 4) {
+      const bool pointer_a = a.pointers.count(pa + k) != 0, pointer_b = b.pointers.count(pb + k) != 0;
+      if (pointer_a != pointer_b) { same = false; break; }
+      if (!pointer_a) { same = a.get(pa + k) == b.get(pb + k); continue; }
+      std::string why;
+      Compare motion{a, b, &why}; motion.allow_visual = false;
+      same = motion.object(a.get(pa + k), b.get(pb + k));
+    }
+    if (same) whole.insert(i);
+  }
 
   // 1. Pair the joints: each original joint with the skin joint at the same place, children matched by
   //    transform and flags so a removed sibling does not shift the rest. 0 = no counterpart.

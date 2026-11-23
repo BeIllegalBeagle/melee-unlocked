@@ -68,7 +68,8 @@ int main(int argc,char** argv) {
     for(const std::vector<uint8_t>* base:{&online,&skin}) {
       if(base->empty()) continue;
       std::vector<uint8_t> out; std::string note;
-      const bool grafted=host::cosmetics::stage_safety::graft_visuals(clean,*base,&out,&note,whole);
+      const bool grafted=host::cosmetics::stage_safety::graft_visuals(clean,*base,&out,&note,whole,
+          host::cosmetics::stage_safety::same_motion_models(argc==3?argv[2]:argv[1]));
       std::printf("drawn over the original (%s): %s: %s\n",base==&online?"repaired":"skin",grafted?"PASS":"FAIL",note.c_str());
       if(grafted) return 0;
     }
@@ -124,6 +125,27 @@ int main(int argc,char** argv) {
     check(graft_visuals(clean,skin,&out,&note) && word(out.data()+32+320+16)!=0,"a joint moved far at the same place is paired");
     check(word(out.data()+32+320+48)==0x42080000u,"the far joint keeps the original transform");
     check(matches(clean,out,&reason),"place pairing preserves gameplay");
+  }
+  {
+    // same_motion_models (Dream Land's Whispy, ImpX 11-23): a model whose code reads only its root and
+    // its animations' end is the skin's whole when the root and every animation slot are the original's.
+    // Then a child the skin moved (flowers sunk below the ground) stays where the skin put it.
+    using namespace host::cosmetics::stage_safety;
+    auto clean=fixture(0,1), skin=fixture(32,2);
+    pointer(clean,96+8,320); pointer(clean,320+16,192);
+    pointer(skin,128+8,352); pointer(skin,352+16,224);
+    put(clean,32+320+48,0x42080000u);   // child translate y 34.0
+    put(skin,32+352+48,0x42480000u);    // 50.0
+    std::vector<uint8_t> out; std::string note;
+    check(graft_visuals(clean,skin,&out,&note,{},{0}) && note.find("drawn whole")!=std::string::npos,"same root and motion: the model is the skin's whole");
+    const uint32_t root=word(out.data()+32+48);
+    check(root!=96 && word(out.data()+32+word(out.data()+32+root+8)+48)==0x42480000u,"the moved child keeps the skin's place");
+    check(matches(clean,out,&reason,{0}),"whole same-motion model passes the gameplay proof");
+    auto moved_root=skin; put(moved_root,32+128+48,0x3F800000u);   // the root itself moved: not whole
+    check(graft_visuals(clean,moved_root,&out,&note,{},{0}) && note.find("drawn whole")==std::string::npos,"a moved root is not taken whole");
+    check(word(out.data()+32+320+48)==0x42080000u,"then the child keeps the original's place");
+    auto new_motion=skin; pointer(new_motion,80+4,224);   // an animation slot the original lacks: not whole
+    check(graft_visuals(clean,new_motion,&out,&note,{},{0}) && note.find("drawn whole")==std::string::npos,"other animations are not taken whole");
   }
   {
     using namespace host::cosmetics::stage_safety;

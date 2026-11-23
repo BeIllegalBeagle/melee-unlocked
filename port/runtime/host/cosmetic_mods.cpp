@@ -6808,7 +6808,8 @@ bool stage_online_form(const std::vector<uint8_t>& clean, const std::vector<uint
     if (base->empty()) continue;
     std::string try_note;
     std::vector<uint8_t> out;
-    if (!stage_safety::graft_visuals(clean, *base, &out, &try_note, stage_safety::visual_only_models(stage_file))) {
+    if (!stage_safety::graft_visuals(clean, *base, &out, &try_note, stage_safety::visual_only_models(stage_file),
+                                      stage_safety::same_motion_models(stage_file))) {
       if (!drawn) note = try_note;
       continue;
     }
