@@ -18,6 +18,7 @@
 #include <cstring>
 #include <functional>
 #include <map>
+#include <mutex>
 #include <set>
 #include <string>
 #include <vector>
@@ -291,9 +292,15 @@ inline float score(const std::vector<Tri>& tris, const Line& l, float tolerance,
   const int n = std::clamp(int(std::fabs(l.x1 - l.x0)), 8, 64);
   struct Near { const Tri* tri; bool flat; float slope; };   // slope: dy/dx along the play plane
   std::vector<Near> near;
+  // Only triangles over the line's span and within `window` of its height can count (keeps a stage's
+  // check to a few milliseconds: it runs for every stage skin when the catalog is read).
+  const float lx0 = std::min(l.x0, l.x1), lx1 = std::max(l.x0, l.x1);
+  const float ly0 = std::min(l.y0, l.y1) - window, ly1 = std::max(l.y0, l.y1) + window;
   for (const Tri& tri : tris) {
     const Vec& a = tri.v[0]; const Vec& b = tri.v[1]; const Vec& c = tri.v[2];
     if (std::min({a.z, b.z, c.z}) > 40.0f || std::max({a.z, b.z, c.z}) < -40.0f) continue;
+    if (std::max({a.x, b.x, c.x}) < lx0 || std::min({a.x, b.x, c.x}) > lx1) continue;
+    if (std::max({a.y, b.y, c.y}) < ly0 || std::min({a.y, b.y, c.y}) > ly1) continue;
     const float ux = b.x - a.x, uy = b.y - a.y, uz = b.z - a.z, vx = c.x - a.x, vy = c.y - a.y, vz = c.z - a.z;
     const float nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
     const float len = std::sqrt(nx * nx + ny * ny + nz * nz);
@@ -302,6 +309,7 @@ inline float score(const std::vector<Tri>& tris, const Line& l, float tolerance,
     near.push_back({&tri, flat, flat ? -nx / ny : 0.0f});
   }
   const float line_slope = l.x1 != l.x0 ? (l.y1 - l.y0) / (l.x1 - l.x0) : 0.0f;
+  const bool debug = std::getenv("MELEE_FLOOR_DEBUG") != nullptr;   // --floor-line in the stage test
   int good = 0;
   for (int s = 0; s < n; ++s) {
     const float t = (s + 0.5f) / n, x = l.x0 + (l.x1 - l.x0) * t, y = l.y0 + (l.y1 - l.y0) * t;
@@ -322,7 +330,7 @@ inline float score(const std::vector<Tri>& tris, const Line& l, float tolerance,
     const bool surface = best <= tolerance && std::fabs(best_slope - line_slope) <= 0.09f;
     const bool edge_top = any_top && std::fabs(top - y) <= tolerance;
     good += surface || edge_top;
-    if (std::getenv("MELEE_FLOOR_DEBUG"))
+    if (debug)
       std::fprintf(stderr, "  x %.1f y %.1f: nearest %.2f slope %.3f (line %.3f), top %.2f\n", x, y, best, best_slope,
                    line_slope, any_top ? top - y : window);
   }
@@ -364,9 +372,24 @@ constexpr float kFloorFitTolerance = 3.0f;
 // for most of that line. A file this cannot read is not judged here (true): the other checks decide.
 inline bool floor_art_fits(const std::vector<uint8_t>& clean, const std::vector<uint8_t>& form, std::string* why,
                            float tolerance = kFloorFitTolerance) {
+  // The original's scores are the same for every skin of a stage: kept by content (FNV-1a of the
+  // bytes) and tolerance, so reading a catalog of stage skins decodes each original once.
+  static std::mutex cache_mutex;
+  static std::map<std::pair<uint64_t, float>, std::pair<bool, std::vector<float>>> cache;
+  uint64_t key = 1469598103934665603ull ^ clean.size();
+  for (uint8_t byte : clean) key = (key ^ byte) * 1099511628211ull;
   std::vector<float> a, b;
-  if (!floor_fit::scores(clean, &a, tolerance) || !floor_fit::scores(form, &b, tolerance) || a.size() != b.size())
-    return true;
+  bool read_clean;
+  {
+    std::lock_guard<std::mutex> lock(cache_mutex);
+    const auto hit = cache.find({key, tolerance});
+    if (hit != cache.end()) { read_clean = hit->second.first; a = hit->second.second; }
+    else {
+      read_clean = floor_fit::scores(clean, &a, tolerance);
+      if (cache.size() < 256) cache[{key, tolerance}] = {read_clean, a};
+    }
+  }
+  if (!read_clean || !floor_fit::scores(form, &b, tolerance) || a.size() != b.size()) return true;
   for (size_t i = 0; i < a.size(); ++i) {
     if (a[i] >= 0.95f && b[i] < 0.5f) {
       if (why) *why = "the skin draws floor " + std::to_string(i) + " away from its collision (" +
