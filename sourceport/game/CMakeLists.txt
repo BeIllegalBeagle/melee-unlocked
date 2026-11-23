@@ -40,6 +40,12 @@ if(NOT EXISTS "${D}/src/melee/gm/gmmain.c")
   message(FATAL_ERROR "melee_game: no game sources at ${D}")
 endif()
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
+if(MU_AARCH64)
+  # Static data gets x86-64 GCC's alignment (32 bytes for anything of 32 bytes or more), which the
+  # game relies on for its DMA buffers; see port/mac/align_like_x86.py.
+  set(CMAKE_C_COMPILER_LAUNCHER "${Python3_EXECUTABLE};${REPO}/port/mac/align_like_x86.py")
+  set(CMAKE_CXX_COMPILER_LAUNCHER "${Python3_EXECUTABLE};${REPO}/port/mac/align_like_x86.py")
+endif()
 include("${REPO}/tools/rank_badges.cmake")
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   # LP64 must never widen the console's explicit long fields or its audio sample
@@ -112,8 +118,9 @@ set(MELEE_CPU_BASELINE "AVX2" CACHE STRING "Instruction set baseline, matching t
 if(MU_AARCH64)
   # Apple's AArch64 ABI keeps x18 for the system and makes plain char signed, as x86-64 does (AArch64
   # Linux makes it unsigned). The atomics stay inline: the outline helpers read the CPU's features
-  # through getauxval, which the Mac loader does not offer.
-  set(MU_AARCH64_FLAGS -ffixed-x18 -mno-outline-atomics)
+  # through getauxval, which the Mac loader does not offer. Each static object gets a section of its
+  # own, with no code relying on its neighbours, for the alignment launcher above.
+  set(MU_AARCH64_FLAGS -ffixed-x18 -mno-outline-atomics -fdata-sections -fno-section-anchors)
   target_compile_options(game_flags INTERFACE ${MU_AARCH64_FLAGS} -fsigned-char)
 else()
   # the console compiler packs a u8 and a u16 bitfield into one run; the MS layout does not

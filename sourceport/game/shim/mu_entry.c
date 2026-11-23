@@ -257,7 +257,7 @@ unsigned int mu_music_volume(void)
  * snapshot's check before it follows a fighter pointer, as the recompiled build's reader does. */
 int mu_is_game_memory(const void* p, unsigned long size)
 {
-    const uintptr_t lo = 0x80000000u, hi = lo + (mu_host ? mu_host->mem1_size() : 0);
+    const uintptr_t lo = MU_WIDEN(0x80000000u), hi = lo + (mu_host ? mu_host->mem1_size() : 0);
     const uintptr_t a = (uintptr_t) p;
     return a >= lo && a < hi && size <= hi - a;
 }

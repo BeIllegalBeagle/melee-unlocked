@@ -54,11 +54,12 @@ inline double f25(double d) {
   std::memcpy(&d, &i, 8); return d;
 }
 #if defined(__aarch64__)
-// One rounding each, as FMA3 does: fmadd, fnmsub, fnmadd and fmsub d.
+// One rounding each, as FMA3 does, with the operands negated as the x86 instructions do so zero signs
+// match too (port/runtime/ppc/ppc.h): fmadd, fnmsub, fnmadd and fmsub d.
 inline double fmadd(double a, double c, double b) { return __builtin_fma(a, c, b); }
 inline double fmsub(double a, double c, double b) { return __builtin_fma(a, c, -b); }
-inline double fnmadd(double a, double c, double b) { return -__builtin_fma(a, c, b); }
-inline double fnmsub(double a, double c, double b) { return __builtin_fma(-a, c, b); }
+inline double fnmadd(double a, double c, double b) { return __builtin_fma(-a, c, -b); }   // VFNMSUB
+inline double fnmsub(double a, double c, double b) { return __builtin_fma(-a, c, b); }    // VFNMADD
 #else
 inline double fmadd(double a, double c, double b) { return _mm_cvtsd_f64(_mm_fmadd_sd(_mm_set_sd(a), _mm_set_sd(c), _mm_set_sd(b))); }
 inline double fmsub(double a, double c, double b) { return _mm_cvtsd_f64(_mm_fmsub_sd(_mm_set_sd(a), _mm_set_sd(c), _mm_set_sd(b))); }
