@@ -272,8 +272,22 @@ static int early_contradicts(int count)
     int latest = (int) be32(mu_online.rxb + RXB_OPNT_FRAME_NUMS + 4 * count);
     int f = mu_online.player_savestate_frame[count];
     u8 r = mu_online.predicted_read[count];
+    if (early_trace_on()) {
+        const u8* any = early_pad(count, 0x7FFFFFFF, latest);
+        if (any != NULL) {
+            logf_("early check: remote %d latest %d savestate %d read %d write %d game frame %d",
+                  count, latest, f, (int) r, (int) mu_online.predicted_write[count], (int) mu_online.frame);
+        }
+    }
     while (r != mu_online.predicted_write[count]) {
         const u8* early = early_pad(count, f, latest);
+        if (early != NULL && early_trace_on()) {
+            logf_("early check: remote %d frame %d early %02x%02x %d,%d guess %02x%02x %d,%d zone %d",
+                  count, f, early[0], early[1], (s8) early[2], (s8) early[3],
+                  mu_online.predicted[count][r][0], mu_online.predicted[count][r][1],
+                  (s8) mu_online.predicted[count][r][2], (s8) mu_online.predicted[count][r][3],
+                  pads_contradict_zone(early, mu_online.predicted[count][r]));
+        }
         if (early != NULL && (early_rb_any() ? pads_differ(early, mu_online.predicted[count][r])
                                                : pads_contradict_zone(early, mu_online.predicted[count][r]))) {
             return 1;

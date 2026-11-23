@@ -124,6 +124,9 @@ std::atomic<uint32_t> g_margin_grows{0};
 // the end). 0 until the output thread has seen the starting target.
 uint32_t g_match_target_ms = 0;
 std::atomic<uint32_t> g_menu_grows{0};
+// A match just started (output thread only): the queue the menus grew is cut to the match's level once,
+// at the next check, instead of draining at the clock loop's gentle pace for seconds into the match.
+bool g_match_start_cut = false;
 std::atomic<int> g_requested_mode{0}, g_requested_buffer_ms{40};
 std::atomic<bool> g_buffering_changed{false};
 std::atomic<uint32_t> g_target_ms{40}, g_device_queue_ms{0}, g_engine_period_us{0};
@@ -403,11 +406,17 @@ void wasapi_thread() {
       // Exclusive: the device drains and refills a whole period too; without it the normal swing
       // was cut about 45 times a second (heard as stutter).
       const uint64_t swing = (g_direct || g_exclusive) ? (uint64_t)g_period_frames * SAMPLE_RATE / g_device_rate : 0;
-      const uint64_t margin = std::max<uint64_t>(SAMPLE_RATE * 8 / 1000 + swing, g_target_frames / 2);
+      uint64_t margin = std::max<uint64_t>(SAMPLE_RATE * 8 / 1000 + swing, g_target_frames / 2);
+      // The first check of a match: everything past the match's level and the device's own swing goes, so
+      // the match starts with the same delay as one that followed no menu growth (1.0.8 grew the queue in
+      // menus; the target came back at the match start but the queued audio drained for seconds).
+      const bool match_start_cut = g_match_start_cut;
+      g_match_start_cut = false;
+      if (match_start_cut) margin = swing + SAMPLE_RATE * 2 / 1000;
       // Two-stage exclusive: the ring takes a whole frame of audio at once and gives a whole period
       // at once, so a single reading swings far past the target; only a level that stays high on
       // the one-second average is surplus (a stall), or every frame's burst was cut (heard as stutter).
-      const bool sustained = g_direct || g_fill_average > (double)(g_target_frames + margin);
+      const bool sustained = g_direct || match_start_cut || g_fill_average > (double)(g_target_frames + margin);
       if (sustained && buffered > g_target_frames + margin) {
         // Only the ring can be cut; the direct path keeps any surplus there (see device_cap).
         const uint64_t cut = std::min<uint64_t>(buffered - g_target_frames, ring_buffered);
@@ -428,6 +437,7 @@ void wasapi_thread() {
           held_level = (double)(buffered - cut);
           trim_now = true;
           g_trims.fetch_add(1);
+          if (match_start_cut) log("audio: match start: cut %.1f ms the menus had queued", cut * 1000.0 / SAMPLE_RATE);
         }
       }
     }
@@ -537,6 +547,7 @@ void wasapi_thread() {
           g_buffer_policy.target_ms = std::max(g_buffer_policy.floor_ms, g_match_target_ms);
           g_buffer_policy.clean_frames = 0;
           g_target_frames = SAMPLE_RATE * g_buffer_policy.target_ms / 1000;
+          g_match_start_cut = true;
         } else g_match_target_ms = g_buffer_policy.target_ms;
         was_gameplay = gameplay;
       } else if (gameplay) g_match_target_ms = g_buffer_policy.target_ms;
