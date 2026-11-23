@@ -53,6 +53,15 @@ inline bool dualsense_pad(unsigned long vendor, unsigned long product) {
 constexpr int8_t kTriggerRestMin = 0, kTriggerRestCentre = 1, kTriggerRestMax = 2;
 int8_t hid_trigger_rest(long logical_min, long logical_max, long raw);
 uint8_t hid_trigger_value(long logical_min, long logical_max, long raw, int8_t rest);
+// The trigger's origin taken off, as the console's pad library does when it reads a controller (the
+// game's own clamp takes nothing off): the lowest value seen, at most 64 (a trigger held when the pad
+// appeared), starting from the first. `origin` is the pad's own, kTriggerOriginUnknown at first.
+constexpr uint8_t kTriggerOriginUnknown = 255, kTriggerOriginMax = 64;
+inline uint8_t hid_trigger_from_origin(uint8_t value, uint8_t* origin) {
+  if (*origin == kTriggerOriginUnknown) *origin = value < kTriggerOriginMax ? value : kTriggerOriginMax;
+  else if (value < *origin) *origin = value;
+  return value > *origin ? (uint8_t)(value - *origin) : 0;
+}
 // A stick axis as the reader turns it into the pad's signed value (floored, no deadzone), for tests.
 int8_t hid_axis_signed(long logical_min, long logical_max, long raw, bool flip = false);
 

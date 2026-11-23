@@ -89,6 +89,7 @@ struct Slot {
   // Where each axis rests when nothing touches it, decided from the first report (see hid_trigger_rest).
   // Only the axes read as triggers use it.
   int8_t rest[8] = {-1, -1, -1, -1, -1, -1, -1, -1};
+  uint8_t origin[8] = {255, 255, 255, 255, 255, 255, 255, 255};   // hid_trigger_from_origin, per axis
 };
 
 constexpr USAGE kAxisOrder[8] = {kUsageX, kUsageY, kUsageZ, kUsageRx, kUsageRy, kUsageRz, kUsageSlider, kUsageHat};
@@ -336,7 +337,7 @@ uint8_t hid_trigger_value(long logical_min, long logical_max, long raw, int8_t r
     default:                 t = ((double)raw - lo) / (hi - lo); break;
   }
   // Cut off, not rounded, as Dolphin does when it turns an axis into the controller's byte: a B0XX r2 in
-  // DInput sends 30, 79 and 124 that way (rest, light shield, mid shield; the game takes 30 off: 0, 49, 94).
+  // DInput sends 30, 79 and 124 that way (rest, light shield, mid shield; its origin, 30, comes off: 0, 49, 94).
   // Rounded they were 31, 80 and 125, one too many on each (player report 11-23).
   return (uint8_t)std::clamp((int)std::floor(t * 255.0 + 1e-9), 0, 255);
 }
@@ -527,7 +528,13 @@ bool hidpad_raw_input(void* device_handle, const uint8_t* report, uint32_t size,
         host::log("hid pad %d: trigger axis %s rests %s", index + 1, axis_name(s.axes[i].usage),
                   s.rest[i] == kTriggerRestCentre ? "at the centre, read as a half-axis" : "at the top, read reversed");
     }
-    return hid_trigger_value(s.axes[i].logical_min, s.axes[i].logical_max, raw, s.rest[i]);
+    // The origin off, as a console's pad library takes it (a box resting at 30: its light shield 79 is 49).
+    const uint8_t before = s.origin[i];
+    const uint8_t v = hid_trigger_from_origin(hid_trigger_value(s.axes[i].logical_min, s.axes[i].logical_max, raw, s.rest[i]),
+                                              &s.origin[i]);
+    if (s.origin[i] != before && s.origin[i])
+      host::log("hid pad %d: trigger axis %s origin %u", index + 1, axis_name(s.axes[i].usage), (unsigned)s.origin[i]);
+    return v;
   };
   // HayBox DInput: Z is the left trigger, Rz the right (TUGamepad's report). Any other pad: the slider
   // is the left one, and Z the right one when Rx/Ry carry the C-stick. The player's own choice comes first.
