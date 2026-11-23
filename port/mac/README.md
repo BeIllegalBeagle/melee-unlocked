@@ -1,3 +1,29 @@
+## Building from a clone
+
+Apple silicon or Intel, macOS 15 or later, Xcode's command line tools, cmake, git
+and gh, plus a retail NTSC 1.02 disc:
+
+```sh
+port/mac/build_deps.sh                  # once: fills ../deps beside the repository
+port/mac/build_all.sh path/to/melee.iso # decomp sources, game library, headers, host, app
+./play-mac.command                      # asks for the disc the first time
+```
+
+`build_deps.sh` builds SDL2, glslang and SPIRV-Cross (universal), static x86-64
+libusb, and downloads messense's GCC 15.2 cross compiler for x86-64 Linux
+(`linux-x86_64-cross.cmake`). `build_all.sh` prepares `sourceport/extern/melee`,
+builds `melee_game.so` with that compiler and `-fno-stack-protector` (the loader
+refuses stack-canary code) and with Doubles and Squad Strike on as in the Linux
+release, recompiles the headers from the disc, then runs
+`build_full.py --squad-strike --doubles`. The app is
+`build-mac-full-squad/MeleeUnlocked.app`; later runs rebuild only what
+changed. The official Linux game is built with GCC 14, so online play against
+other platforms is not yet verified to stay in sync.
+
+The GameCube adapter (Wii U mode) is opened through libusb, as Slippi Dolphin
+does. Like Dolphin, it needs [GCAdapterDriver](https://github.com/secretkeysio/GCAdapterDriver)
+installed and enabled; close Dolphin first, since one program holds the adapter at a time.
+
 ## Staging agent-test variant
 
 `python3 -B port/mac/build_full.py --agent-test-hook` enables the staging-only
@@ -387,8 +413,10 @@ picture before swap. `MELEE_TEST_SURFACE` enables the far-corner surface probe.
 - Media decoding is deliberately stubbed on Apple: no FFmpeg video backgrounds,
   decoded border pictures or compressed music-pack playback. Game AX audio is
   compiled in; DSP coefficients resolve from the bundle.
-- Raw HID and libusb GameCube adapter support are unavailable; SDL controllers
-  and keyboard are compiled in. No macOS privacy grants or input-monitoring APIs
+- The GameCube adapter is read through libusb when `../deps/libusb` exists
+  (see "Building from a clone" above); otherwise only through the YouGame app.
+  Raw HID pads are unavailable; SDL controllers and keyboard are compiled in.
+  No macOS privacy grants or input-monitoring APIs
   are added. Steam/process discovery is unavailable. The Mac routing table uses `sysctl`;
   NAT-PMP/UPnP and actual Internet matchmaking remain unvalidated.
 - The existing spike ELF loader patches exactly 5,928 Linux TLS canary sites.

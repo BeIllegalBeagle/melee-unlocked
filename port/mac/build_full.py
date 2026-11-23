@@ -6,6 +6,9 @@ BUILD = ROOT / 'build-mac-full'
 DEFAULT_GAME_LIBRARY = ROOT / 'build-mac-input' / 'melee_game.so'
 GAME_LIBRARY = Path(os.environ.get('MELEE_GAME_LIBRARY', str(DEFAULT_GAME_LIBRARY))).resolve()
 SDL = ROOT.parent / 'deps/sdl2'
+# Static x86_64 libusb (include/libusb-1.0, lib/libusb-1.0.a): when present, the GameCube adapter is read
+# directly, as Slippi Dolphin does on the Mac; without it only through the YouGame app.
+LIBUSB = ROOT.parent / 'deps/libusb'
 
 def squad_env():
     return os.environ.get('MELEE_SQUAD_STRIKE', 'OFF').upper() in ('ON', '1', 'TRUE')
@@ -114,6 +117,9 @@ def main():
         cpp += ['-DMELEE_YOUGAME_START_STAGING=1']
     if args.squad_strike:
         cpp += ['-DMU_SQUAD=1']
+    gc_adapter = (LIBUSB/'lib/libusb-1.0.a').exists()
+    if not gc_adapter:
+        print('No libusb at', LIBUSB, '- the GameCube adapter is read only through the YouGame app', flush=True)
     for p in ['port/linux/compat','port/linux','port/app','port/runtime/ppc','port/runtime/hle','port/runtime/host',
               'port/runtime/gx','port/runtime/mu_net','port/runtime/abi','port/third_party','native',str(BUILD/'gen'),
               str(gen),'port/third_party/enet/include','port/third_party/monocypher','port/third_party/imgui','port/third_party/onnxruntime/include',
@@ -140,6 +146,8 @@ def main():
                                     source == Path('port/third_party/slippilib/SlippiGame.cpp')):
             # Include runtime platform replacements and host app units, as in CMake.
             opts += ['-DYOUGAME_AGENT_TEST_HOOK']
+        if gc_adapter and source.as_posix() == 'port/runtime/host/gc_adapter.cpp':
+            opts += ['-DMELEE_MAC_GC_ADAPTER=1', '-I'+str(LIBUSB/'include/libusb-1.0')]
         if source.as_posix() != 'port/app/main.cpp':
             opts += ['-mavx2', '-mfma']
         if source.as_posix().startswith('port/third_party/zstd/') or source.as_posix() == 'port/app/replay_slpz.cpp':
@@ -170,6 +178,7 @@ def main():
         library.unlink()  # ar must not retain objects removed from the source list
     subprocess.run(['/usr/bin/ar', 'rcs', str(library), *[p for p in paths if p not in app_objects]], check=True)
     subprocess.run(['/usr/bin/clang++',*flags,*app_objects,str(library),'-L'+str(SDL/'lib'),'-lSDL2-2.0.0','-lcurl','-liconv',
+                    *([str(LIBUSB/'lib/libusb-1.0.a'),'-lobjc','-framework','IOKit'] if gc_adapter else []),
                     '-framework','OpenGL','-framework','AppKit','-framework','CoreGraphics','-framework','Security',
                     '-framework','CoreServices','-framework','CoreFoundation','-Wl,-pagezero_size,0x10000',
                     '-Wl,-rpath,@executable_path/../Frameworks','-Wl,-rpath,'+str(SDL/'lib'),
