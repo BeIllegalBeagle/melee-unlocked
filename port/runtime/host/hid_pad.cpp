@@ -9,6 +9,7 @@
 #include <hidsdi.h>
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <array>
 #include <cstring>
 #include <mutex>
@@ -73,6 +74,11 @@ struct Slot {
   uint32_t buttons = 0;
   int log_reports = 0;   // first few reports after a device appears, for diagnosing a pad that will not bind
   int log_changes = 0;   // and the first presses after that: which bit or trigger each button moves
+  // Trigger values on their own count, each settled value once: a box's light and mid shield (79, 124)
+  // move only the trigger, and a trigger resting at 30 never crossed the old "above 20" test, so the
+  // logs a player sent for those buttons held no trigger line at all (11-23).
+  int log_triggers = 0;
+  uint8_t logged_l = 0, logged_r = 0;
   std::string fields;    // every value field the device declares, for the log
   int32_t raw[8]{};
   int32_t val[8]{};        // the same, as the signed number a signed field carries
@@ -402,6 +408,8 @@ bool hidpad_raw_input(void* device_handle, const uint8_t* report, uint32_t size,
     if (!s.fields.empty()) host::log("hid pad %d: value fields (page:usage): %s", index + 1, s.fields.c_str());
     s.log_reports = 3;
     s.log_changes = 40;
+    s.log_triggers = 60;
+    s.logged_l = s.logged_r = 0;
   }
   if (!s.ready) return false;
 
@@ -573,6 +581,13 @@ bool hidpad_raw_input(void* device_handle, const uint8_t* report, uint32_t size,
   else if (s.log_changes && (mask != s.buttons || (pad.trig_l > 20) != (s.pad.trig_l > 20) || (pad.trig_r > 20) != (s.pad.trig_r > 20))) {
     --s.log_changes;
     host::log("hid pad %d: buttons %08X, triggers %u/%u", index + 1, mask, pad.trig_l, pad.trig_r);
+  }
+  // Each new trigger value (a step of 4 or more from the last one logged; a box jumps straight there).
+  if (!s.log_reports && s.log_triggers && (std::abs((int)pad.trig_l - (int)s.logged_l) >= 4 ||
+                                          std::abs((int)pad.trig_r - (int)s.logged_r) >= 4)) {
+    --s.log_triggers;
+    s.logged_l = pad.trig_l; s.logged_r = pad.trig_r;
+    host::log("hid pad %d: triggers now %u/%u (buttons %08X)", index + 1, pad.trig_l, pad.trig_r, mask);
   }
   s.pad = pad;
   s.buttons = mask;
