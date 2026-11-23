@@ -2666,12 +2666,15 @@ static void midtick_note_poll() {
   }
   g_midtick_polled = held;
 }
-static const struct MidtickTest {
+struct MidtickTest {
   unsigned every = 0, shift = 0; double offset = 0.0;   // <every n ticks>:<ms into the tick>[:<ticks earlier>]
-  MidtickTest() { if (const char* v = std::getenv("MELEE_TEST_MIDTICK_PRESS")) { double ms = 0; if (std::sscanf(v, "%u:%lf:%u", &every, &ms, &shift) >= 2) offset = ms / 1000.0; else every = 0; } }
-} g_midtick_test;
-bool input_midtick_test() { return g_midtick_test.every != 0; }
+  MidtickTest() { if (const char* v = host::test_env::getenv("MELEE_TEST_MIDTICK_PRESS")) { double ms = 0; if (std::sscanf(v, "%u:%lf:%u", &every, &ms, &shift) >= 2) offset = ms / 1000.0; else every = 0; } }
+};
+// Read on first use, through the test switch policy (a release session reads no test switches).
+static const MidtickTest& midtick_test() { static const MidtickTest t; return t; }
+bool input_midtick_test() { return midtick_test().every != 0; }
 bool input_changed_since_poll(double tick_start) {
+  const MidtickTest& g_midtick_test = midtick_test();
   if (g_midtick_test.every) {
     // Down on every n-th tick, up six ticks later, both at the same point inside the tick. Matches only.
     static uint32_t fired = 0;
