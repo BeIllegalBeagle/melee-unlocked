@@ -1,10 +1,10 @@
 #!/bin/bash
 # Builds what the Mac app needs into ../deps, beside the repository; build_full.py and package_full.py
 # read it from there. Each part is skipped once its output exists. Needs Xcode's command line tools,
-# cmake, git and gh (for the cross compiler download).
+# cmake, git and curl.
 #   sdl2/        SDL 2.32.10, universal dylib (bundled into the app)
 #   tools/bin/   glslangValidator 15.0.0 and spirv-cross (vulkan-sdk-1.3.296.0), universal (bundled)
-#   cross/       GCC 15.2 targeting x86-64 Linux (messense), for melee_game.so
+#   cross/       GCC 15.2 targeting x86-64 and AArch64 Linux (messense), for melee_game.so
 #   libusb/      libusb 1.0.30, static x86-64, for the GameCube adapter
 set -euo pipefail
 cd "$(dirname "$0")/../.."
@@ -42,15 +42,19 @@ if [ ! -x "$DEPS/tools/bin/spirv-cross" ]; then
   cp -L "$SRC/SPIRV-Cross/build/spirv-cross" "$DEPS/tools/bin/spirv-cross"
 fi
 
-if [ ! -x "$DEPS/cross/x86_64-unknown-linux-gnu/bin/x86_64-unknown-linux-gnu-gcc" ]; then
-  echo "== x86-64 Linux cross GCC"
-  (cd "$SRC" &&
-   gh release download v15.2.0 -R messense/homebrew-macos-cross-toolchains --clobber \
-     -p 'x86_64-unknown-linux-gnu-aarch64-darwin.tar.gz' -p 'x86_64-unknown-linux-gnu-aarch64-darwin.tar.gz.sha256' &&
-   shasum -a 256 -c x86_64-unknown-linux-gnu-aarch64-darwin.tar.gz.sha256)
-  mkdir -p "$DEPS/cross"
-  tar xzf "$SRC/x86_64-unknown-linux-gnu-aarch64-darwin.tar.gz" -C "$DEPS/cross"
-fi
+# The game for each architecture is built by the same GCC release, so both fuse the same a*b+c.
+for target in x86_64 aarch64; do
+  if [ ! -x "$DEPS/cross/$target-unknown-linux-gnu/bin/$target-unknown-linux-gnu-gcc" ]; then
+    echo "== $target Linux cross GCC"
+    asset="$target-unknown-linux-gnu-aarch64-darwin.tar.gz"
+    (cd "$SRC" &&
+     curl -fsSLO "https://github.com/messense/homebrew-macos-cross-toolchains/releases/download/v15.2.0/$asset" &&
+     curl -fsSLO "https://github.com/messense/homebrew-macos-cross-toolchains/releases/download/v15.2.0/$asset.sha256" &&
+     shasum -a 256 -c "$asset.sha256")
+    mkdir -p "$DEPS/cross"
+    tar xzf "$SRC/$target-unknown-linux-gnu-aarch64-darwin.tar.gz" -C "$DEPS/cross"
+  fi
+done
 
 if [ ! -f "$DEPS/libusb/lib/libusb-1.0.a" ]; then
   echo "== libusb"

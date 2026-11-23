@@ -1,7 +1,7 @@
 ## Building from a clone
 
 Apple silicon or Intel, macOS 15 or later, Xcode's command line tools, cmake, git
-and gh, plus a retail NTSC 1.02 disc:
+and curl, plus a retail NTSC 1.02 disc:
 
 ```sh
 port/mac/build_deps.sh                  # once: fills ../deps beside the repository

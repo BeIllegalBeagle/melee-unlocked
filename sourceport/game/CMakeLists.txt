@@ -12,11 +12,15 @@ enable_testing()
 if(NOT CMAKE_C_COMPILER_ID STREQUAL "GNU" OR CMAKE_C_COMPILER_VERSION VERSION_LESS 14)
   message(FATAL_ERROR "melee_game needs GCC 14 or newer: scalar_storage_order, and -ffp-contract=on meaning what the standard says")
 endif()
-if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8 OR NOT CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64)$")
-  message(FATAL_ERROR "melee_game requires an x86-64 target")
+# AArch64 Linux is the Apple silicon Mac's game: an ELF that port/mac/elf_loader.cpp maps itself.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
+  set(MU_AARCH64 ON)
+endif()
+if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8 OR NOT (CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64)$" OR MU_AARCH64))
+  message(FATAL_ERROR "melee_game requires an x86-64 target, or AArch64 Linux for the Apple silicon Mac")
 endif()
 if(NOT WIN32 AND NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
-  message(FATAL_ERROR "melee_game supports Windows x64 and native Linux x86-64")
+  message(FATAL_ERROR "melee_game supports Windows x64, native Linux x86-64 and the Mac's AArch64 ELF")
 endif()
 
 get_filename_component(REPO "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
@@ -92,7 +96,6 @@ endif()
 target_compile_options(game_flags INTERFACE
   -O2 -g
   -include "${CMAKE_CURRENT_SOURCE_DIR}/include/mu_native.h"   # only C targets link game_flags
-  -mno-ms-bitfields          # the console compiler packs a u8 and a u16 bitfield into one run; the MS layout does not
   -fno-strict-aliasing       # the sources read floats through integer pointers throughout
   -fwrapv
   -fno-aggressive-loop-optimizations   # the sources read one entry past a table on a loop's last pass; GCC took that as proof the pass never runs and dropped it (Peach's third down special item)
@@ -106,10 +109,20 @@ if(MU_MATH_AUDIT)
   target_compile_definitions(game_flags INTERFACE MU_MATH_AUDIT)
 endif()
 set(MELEE_CPU_BASELINE "AVX2" CACHE STRING "Instruction set baseline, matching the host: AVX2, AVX or SSE2")
-if(MELEE_CPU_BASELINE STREQUAL "AVX2")
-  target_compile_options(game_flags INTERFACE -mavx2 -mfma)
-elseif(MELEE_CPU_BASELINE STREQUAL "AVX")
-  target_compile_options(game_flags INTERFACE -mavx)
+if(MU_AARCH64)
+  # Apple's AArch64 ABI keeps x18 for the system and makes plain char signed, as x86-64 does (AArch64
+  # Linux makes it unsigned). The atomics stay inline: the outline helpers read the CPU's features
+  # through getauxval, which the Mac loader does not offer.
+  set(MU_AARCH64_FLAGS -ffixed-x18 -mno-outline-atomics)
+  target_compile_options(game_flags INTERFACE ${MU_AARCH64_FLAGS} -fsigned-char)
+else()
+  # the console compiler packs a u8 and a u16 bitfield into one run; the MS layout does not
+  target_compile_options(game_flags INTERFACE -mno-ms-bitfields)
+  if(MELEE_CPU_BASELINE STREQUAL "AVX2")
+    target_compile_options(game_flags INTERFACE -mavx2 -mfma)
+  elseif(MELEE_CPU_BASELINE STREQUAL "AVX")
+    target_compile_options(game_flags INTERFACE -mavx)
+  endif()
 endif()
 # Disc pointers are 32-bit slots holding real addresses, so everything the game can point at has to
 # sit below 4 GB: the image at a fixed base with relocation off, MEM1 placed by the host.
@@ -457,15 +470,20 @@ set(TMCE "${CMAKE_CURRENT_SOURCE_DIR}/tmce")
 get_filename_component(TMCE_TOOLCHAIN_BIN "${CMAKE_C_COMPILER}" DIRECTORY)
 # No debug info: TM-CE declares types with the decomp's names (ColorOverlay, CollData...), and the
 # layout tools (tools/tmce/gdb_decomp_info.py) must find only the decomp's in melee_game.dbg.
-set(TMCE_FLAGS -O2 -g0 -funsigned-char -fno-strict-aliasing -fwrapv -mno-ms-bitfields -mcmodel=small
+set(TMCE_FLAGS -O2 -g0 -funsigned-char -fno-strict-aliasing -fwrapv -mcmodel=small
   -fno-builtin -ffp-contract=on -w)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   list(APPEND TMCE_FLAGS -fPIC -fvisibility=hidden -fno-tree-sra)
 endif()
-if(MELEE_CPU_BASELINE STREQUAL "AVX2")
-  list(APPEND TMCE_FLAGS -mavx2 -mfma)
-elseif(MELEE_CPU_BASELINE STREQUAL "AVX")
-  list(APPEND TMCE_FLAGS -mavx)
+if(MU_AARCH64)
+  list(APPEND TMCE_FLAGS ${MU_AARCH64_FLAGS})
+else()
+  list(APPEND TMCE_FLAGS -mno-ms-bitfields)
+  if(MELEE_CPU_BASELINE STREQUAL "AVX2")
+    list(APPEND TMCE_FLAGS -mavx2 -mfma)
+  elseif(MELEE_CPU_BASELINE STREQUAL "AVX")
+    list(APPEND TMCE_FLAGS -mavx)
+  endif()
 endif()
 set(TMCE_OBJECTS)
 function(tmce_module name exports)
