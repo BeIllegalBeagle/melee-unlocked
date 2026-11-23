@@ -26,12 +26,18 @@ constexpr USAGE kUsageX = 0x30, kUsageY = 0x31, kUsageZ = 0x32;
 constexpr USAGE kUsageRx = 0x33, kUsageRy = 0x34, kUsageRz = 0x35;
 constexpr USAGE kUsageSlider = 0x36, kUsageHat = 0x39;
 constexpr USAGE kUsagePageButton = 0x09;
+// Simulation Controls: where the Arduino Joystick library, which many Leonardo-based boxes are built on,
+// puts everything past the two sticks (rudder, throttle, accelerator, brake).
+constexpr USAGE kUsagePageSimulation = 0x02;
+constexpr USAGE kUsageRudder = 0xBA, kUsageThrottle = 0xBB, kUsageAccelerator = 0xC4, kUsageBrake = 0xC5;
 
 const char* axis_name(USAGE usage) {
   switch (usage) {
     case kUsageX: return "X"; case kUsageY: return "Y"; case kUsageZ: return "Z";
     case kUsageRx: return "Rx"; case kUsageRy: return "Ry"; case kUsageRz: return "Rz";
     case kUsageSlider: return "Slider"; case kUsageHat: return "Hat";
+    case kUsageRudder: return "Rudder"; case kUsageThrottle: return "Throttle";
+    case kUsageAccelerator: return "Accelerator"; case kUsageBrake: return "Brake";
     default: return "?";
   }
 }
@@ -41,6 +47,7 @@ struct Axis {
   LONG logical_min = 0, logical_max = 0;
   bool present = false;
   USHORT bits = 0;   // the field's size in the report
+  USAGE page = kUsagePageGeneric;
 };
 
 struct Slot {
@@ -64,6 +71,8 @@ struct Slot {
   PadState pad{};
   uint32_t buttons = 0;
   int log_reports = 0;   // first few reports after a device appears, for diagnosing a pad that will not bind
+  int log_changes = 0;   // and the first presses after that: which bit or trigger each button moves
+  std::string fields;    // every value field the device declares, for the log
   int32_t raw[8]{};
   int32_t val[8]{};        // the same, as the signed number a signed field carries
   int8_t dec[8]{};         // every axis as a stick value, for choosing one by moving it
@@ -188,6 +197,36 @@ bool describe(Slot& s, HANDLE device) {
   HidAxisRange ranges[8];
   for (int i = 0; i < 8; ++i) ranges[i] = {s.axes[i].present, (long)s.axes[i].logical_min, (long)s.axes[i].logical_max};
   s.haybox = haybox_dinput_shape(ranges, s.button_min, s.button_max);
+  // Two sticks and nothing else among the usual axes, plus exactly two Simulation Controls fields: those
+  // are the box's analog triggers (a B0XX r2 in DInput mode: 16 report bytes, of which X Y Rx Ry and the
+  // buttons explain 12; its light shield buttons did nothing and could not be bound, 11-23). They take the
+  // slider's place (L) and Z's (R), in report order; Controls > Box layouts swaps them if that is wrong.
+  s.fields.clear();
+  int sim[2] = {-1, -1}, sim_count = 0;
+  for (USHORT v = 0; v < value_count; ++v) {
+    const HIDP_VALUE_CAPS& c = values[v];
+    const USAGE usage = c.IsRange ? c.Range.UsageMin : c.NotRange.Usage;
+    char one[80];
+    std::snprintf(one, sizeof one, "%s%02X:%02X %u bits %ld..%ld", s.fields.empty() ? "" : ", ", (unsigned)c.UsagePage,
+                  (unsigned)usage, (unsigned)c.BitSize, (long)c.LogicalMin, (long)c.LogicalMax);
+    if (s.fields.size() < 600) s.fields += one;
+    if (c.UsagePage != kUsagePageSimulation || c.IsRange) continue;
+    if (usage != kUsageRudder && usage != kUsageThrottle && usage != kUsageAccelerator && usage != kUsageBrake) continue;
+    if (sim_count < 2) sim[sim_count] = v;
+    ++sim_count;
+  }
+  if (sim_count == 2 && s.axes[0].present && s.axes[1].present && s.axes[3].present && s.axes[4].present &&
+      !s.axes[2].present && !s.axes[5].present && !s.axes[6].present) {
+    if (values[sim[0]].NotRange.DataIndex > values[sim[1]].NotRange.DataIndex) std::swap(sim[0], sim[1]);
+    static const int kSlot[2] = {6, 2};
+    for (int k = 0; k < 2; ++k) {
+      const HIDP_VALUE_CAPS& c = values[sim[k]];
+      Axis& a = s.axes[kSlot[k]];
+      a = {c.NotRange.Usage, c.LogicalMin, c.LogicalMax, true, c.BitSize, kUsagePageSimulation};
+      if (a.logical_max <= a.logical_min) { a.logical_min = 0; a.logical_max = (LONG)((1u << std::min<USHORT>(c.BitSize, 31)) - 1); }
+      ++s.axis_count;
+    }
+  }
   // Something with no axes and no buttons is not a pad, whatever it says it is.
   return s.axis_count > 0 || s.button_max >= s.button_min;
 }
@@ -353,7 +392,9 @@ bool hidpad_raw_input(void* device_handle, const uint8_t* report, uint32_t size,
         host::log("hid pad %d: axis %s range %ld..%ld, %u bits", index + 1, axis_name(s.axes[i].usage),
                   (long)s.axes[i].logical_min, (long)s.axes[i].logical_max, (unsigned)s.axes[i].bits);
     if (s.slider_count) host::log("hid pad %d: %d slider fields", index + 1, s.slider_count);
+    if (!s.fields.empty()) host::log("hid pad %d: value fields (page:usage): %s", index + 1, s.fields.c_str());
     s.log_reports = 3;
+    s.log_changes = 40;
   }
   if (!s.ready) return false;
 
@@ -363,7 +404,7 @@ bool hidpad_raw_input(void* device_handle, const uint8_t* report, uint32_t size,
   auto read_axis = [&](int i, LONG& out) {
     if (!s.axes[i].present) return false;
     ULONG raw = 0;
-    if (HidP_GetUsageValue(HidP_Input, kUsagePageGeneric, 0, s.axes[i].usage, &raw, preparsed_of(s),
+    if (HidP_GetUsageValue(HidP_Input, s.axes[i].page, 0, s.axes[i].usage, &raw, preparsed_of(s),
                            (PCHAR)report, size) != HIDP_STATUS_SUCCESS)
       return false;
     out = (LONG)raw;
@@ -521,6 +562,10 @@ bool hidpad_raw_input(void* device_handle, const uint8_t* report, uint32_t size,
     --s.log_reports;
     host::log("hid pad %d: report buttons %08X, stick %d,%d c-stick %d,%d, triggers %u/%u",
               index + 1, mask, pad.stick_x, pad.stick_y, pad.sub_x, pad.sub_y, pad.trig_l, pad.trig_r);
+  }
+  else if (s.log_changes && (mask != s.buttons || (pad.trig_l > 20) != (s.pad.trig_l > 20) || (pad.trig_r > 20) != (s.pad.trig_r > 20))) {
+    --s.log_changes;
+    host::log("hid pad %d: buttons %08X, triggers %u/%u", index + 1, mask, pad.trig_l, pad.trig_r);
   }
   s.pad = pad;
   s.buttons = mask;
