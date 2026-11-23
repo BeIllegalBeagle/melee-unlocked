@@ -202,7 +202,13 @@ def main():
         # ARENA_SETTINGS_EXTRA: more settings lines for every member, "|" between them (tests).
         extra_settings = "".join(x + "\n" for x in os.environ.get("ARENA_SETTINGS_EXTRA", "").split("|") if x.strip())
         settings.write_text("startup 0\nvolume 0\nslippi_spectator 0\n" + ("backend d3d11\n" if shots else "") + extra_settings)
-        cmd = [str(exe), "--iso", str(iso), "--hidden", "--volume", "0", "--frames", str(args.frames),
+        # ARENA_BIN_FOR: another build for some members, e.g. "2=C:/old/MeleeUnlocked" (mixed-version rooms).
+        member_exe = exe
+        for spec in filter(None, os.environ.get("ARENA_BIN_FOR", "").split(";")):
+            k, _, path = spec.partition("=")
+            if k.strip() == str(i):
+                member_exe = (Path(path) / "melee_source.exe").resolve()
+        cmd = [str(member_exe), "--iso", str(iso), "--hidden", "--volume", "0", "--frames", str(args.frames),
                "--script", str(script), "--replay-dir", str(d), "--log-file", str(d / "port.log"),
                "--user-dir", str(user), "--settings-path", str(settings), "--load-settings", "--time-base", "1",
                "--arena-test", f"{i}/{args.players}/{base}"] + args.extra

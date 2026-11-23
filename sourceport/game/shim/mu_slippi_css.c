@@ -661,8 +661,16 @@ int mu_slippi_css_inputs(unsigned int trigger)
             OSReport("arena: no winner or loser on record, local index %d %s the stage\n", (int) m->local_index,
                      m->local_index == 0 ? "picks" : "waits for");
         }
-        if (test_room && st->is_winner == MU_SLP_WINNER_LOST) {
-            st->chose_stage = 1;   /* a test room: nobody is there to pick, the host's random stage stands */
+        {
+            /* Tests: MELEE_TEST_ARENA_PRESS_START=1 in a real room (hidden runs through Slippi's server)
+             * has nobody to pick a stage either. */
+            static int press_env = -1;
+            if (press_env < 0) {
+                press_env = mu_test_getenv("MELEE_TEST_ARENA_PRESS_START") != NULL;
+            }
+            if ((test_room || (in_room && press_env)) && st->is_winner == MU_SLP_WINNER_LOST) {
+                st->chose_stage = 1;   /* a test room: nobody is there to pick, the host's random stage stands */
+            }
         }
     }
 

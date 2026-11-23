@@ -1464,6 +1464,14 @@ struct Mesh {
   bool ready_sent = false;         // told the host every pair met (kMeshReady)
   bool go = false;                 // the host said everyone is ready (kMeshGo)
 } g_mesh;
+// Tests: MELEE_TEST_ARENA_MESH=1 sends a real Slippi room's pair through the same pairing too, so the
+// mesh's steps (a Direct pair on one port, the address it names, the port let go, the ready and go
+// through the host, the match peered from that address) are proven through Slippi's own server with
+// two accounts.
+bool test_mesh() {
+  static const bool on = [] { const char* v = host::test_env::getenv("MELEE_TEST_ARENA_MESH"); return v && *v == '1'; }();
+  return on;
+}
 bool g_mesh_peer = false;   // Matchmaking::local_peer is the mesh's (cleared when its match is over)
 // The host's roll of fighters ready for the free-for-all of three (kMeshReady), for this game.
 std::set<uint8_t> g_mesh_ready;
@@ -1472,7 +1480,7 @@ uint32_t g_mesh_ready_games = 0xFFFFFFFFu;
 // The host: every fighter's pairs met and ports are free: everyone starts the match at once (a fighter
 // that started first connected to a pair's socket still closing and lost its peers).
 void mesh_check_go() {
-  if (!g_hosting || !ffa(g_room) || g_mesh_ready_games != g_room.games) return;
+  if (!g_hosting || !(ffa(g_room) || test_mesh()) || g_mesh_ready_games != g_room.games) return;
   for (int s = 0; s < kRingMax; ++s)
     if (g_room.ring[s] != kNone && !g_mesh_ready.count(g_room.ring[s])) return;
   std::vector<uint8_t> m = {kMeshGo};
@@ -1643,9 +1651,10 @@ void mesh_tick(const Target& t, const std::string& key) {
   Matchmaking::local_peer = lp;
   g_mesh_peer = true;
   std::string error;
-  const bool started = online::arena_start_search(t.mode, t.code, false, g_test.character, 0, 0, true, &error);
+  const bool started = online::arena_start_search(t.mode, t.code, false, g_test.character, 0, 0, t.ffa, &error);
   if (started) {
-    event("free-for-all of three: match on port %u with %s and %s (slot %d)", g_mesh.port, lp.remotes[0].c_str(), lp.remotes[1].c_str(), slot);
+    event("free-for-all of three: match on port %u with %s%s%s (slot %d)", g_mesh.port, lp.remotes[0].c_str(),
+          lp.remotes.size() > 1 ? " and " : "", lp.remotes.size() > 1 ? lp.remotes[1].c_str() : "", slot);
     g_status = "Connecting to the free-for-all";
     g_mesh.on = false;   // done; a failed match or the next game starts the pairing over
   } else {
@@ -1660,6 +1669,7 @@ void mesh_tick(const Target& t, const std::string& key) {
 // always), with the character picked on the select, so hidden games play their matches.
 // Tests: MELEE_TEST_ARENA_PRESS_START=1 keeps a test room from locking its fighters in: each one locks in
 // with Start on the select, as players do (the select presses it, shim/mu_slippi_css.c), so the select's own Start path is covered.
+std::string g_test_lock_key;   // the search and game the test lock-in was made for (once per game)
 bool test_press_start() {
   static const bool on = [] { const char* v = host::test_env::getenv("MELEE_TEST_ARENA_PRESS_START"); return v && *v == '1'; }();
   return on;
@@ -1712,15 +1722,21 @@ void steer_match() {
     g_status = "Could not reach " + t.label + ", trying again";
     return;
   }
+  // Tests: a test lock-in happens once per game. Its game clears the pick when it starts, so a second
+  // lock-in a moment later (the menus still polled) sent a new pick and seed from inside the game, and
+  // fighters still on the select built another stage from it (a desync from frame 1).
+  const std::string lock_key = t.code + "/" + std::to_string(g_room.games);
   if (searching) {
     g_status = st.state == (int)Matchmaking::CONNECTION_SUCCESS ? "Ready to fight " + t.label : "Connecting to " + t.label;
-    if (g_test.on && !test_press_start() && st.state == (int)Matchmaking::CONNECTION_SUCCESS && !st.local_ready &&
-        online::arena_lock_in(g_test.character, 0))
+    const bool may_lock = st.state == (int)Matchmaking::CONNECTION_SUCCESS && !st.local_ready && g_test_lock_key != lock_key;
+    if (g_test.on && !test_press_start() && may_lock && online::arena_lock_in(g_test.character, 0)) {
+      g_test_lock_key = lock_key;
       event("locked in for %s", t.code.c_str());
+    }
     uint8_t picked = 2, colour = 0;
-    if (!g_test.on && test_autolock() && st.state == (int)Matchmaking::CONNECTION_SUCCESS && !st.local_ready) {
+    if (!g_test.on && test_autolock() && may_lock) {
       online::local_css_selection(&picked, &colour);
-      if (online::arena_lock_in(picked, colour)) event("locked in for %s (test)", t.code.c_str());
+      if (online::arena_lock_in(picked, colour)) { g_test_lock_key = lock_key; event("locked in for %s (test)", t.code.c_str()); }
     }
     return;
   }
@@ -1765,7 +1781,7 @@ void steer_match() {
   }
   // A Slippi free-for-all of three: no Teams match of three on Slippi's server; the fighters pair up
   // and make the match themselves (Mesh above).
-  if (t.ffa && t.others.size() == 2 && !g_yg && !g_test.on) {
+  if (((t.ffa && t.others.size() == 2) || (test_mesh() && !t.others.empty())) && !g_yg && !g_test.on) {
     mesh_tick(t, pairing + "/" + std::to_string(g_room.games));
     g_next_match_ms = now_ms() + 300;
     return;
@@ -1780,8 +1796,10 @@ void steer_match() {
     for (int s = 0; s < ring_size(g_room); ++s)
       if (const Member* m = find(g_room, g_room.ring[s])) ring_ids.push_back(m->code);
     started = online::arena_start_yg_search(t.mode, ring_ids, t.code, locked, g_test.character, 0, t.team, t.ffa, &error);
+    if (started && locked) g_test_lock_key = lock_key;
   } else {
     started = online::arena_start_search(t.mode, t.code, locked, g_test.character, 0, t.team, t.ffa, &error);
+    if (started && locked) g_test_lock_key = lock_key;   // locked in with the search: that is this game's lock-in
   }
   if (started) {
     event("searching for %s (%s)", t.code.c_str(), t.ffa ? "free-for-all" : t.mode == Matchmaking::TEAMS ? "doubles" : "singles");
