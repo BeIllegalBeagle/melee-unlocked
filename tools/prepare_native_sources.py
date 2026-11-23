@@ -10,12 +10,26 @@ BASE = '039c4bf4ca33338c35d21901ad19b7ede19d19ad'
 
 def prepare(decomp, archive=None):
     patch = ROOT / 'sourceport/patches/melee-native.patch'
+    # The Apple silicon Mac's widening of 32-bit addresses (sourceport/game/include/mu_window.h),
+    # kept apart from the released patch and applied on top of it.
+    mac_patch = ROOT / 'sourceport/patches/melee-native-mac.patch'
     def git(*args):
         return subprocess.run(['git', '-C', str(decomp), *args], capture_output=True, text=True)
+    def apply(p):
+        check = git('apply', '--check', str(p))
+        if check.returncode:
+            raise SystemExit(check.stderr)
+        result = git('apply', str(p))
+        if result.returncode:
+            raise SystemExit(result.stderr)
     if archive and git('rev-parse', '--show-toplevel').stdout.strip() != str(decomp.resolve()):
         subprocess.run(['git', '-C', str(decomp), 'init', '-q'], check=True)
-    if git('apply', '--reverse', '--check', str(patch)).returncode == 0:
+    if git('apply', '--reverse', '--check', str(mac_patch)).returncode == 0:
         print('Native Melee sources are already prepared.')
+        return
+    if git('apply', '--reverse', '--check', str(patch)).returncode == 0:
+        apply(mac_patch)
+        print('Added the Mac changes to the prepared native Melee sources.')
         return
     if archive:
         # git archives lack .git. Verify both their embedded pinned commit and
@@ -41,12 +55,8 @@ def prepare(decomp, archive=None):
         status = git('status', '--porcelain', '--untracked-files=no')
         if status.returncode or status.stdout.strip():
             raise SystemExit('Melee sources have local changes. Use a clean checkout before applying the native patch.')
-    check = git('apply', '--check', str(patch))
-    if check.returncode:
-        raise SystemExit(check.stderr)
-    result = git('apply', str(patch))
-    if result.returncode:
-        raise SystemExit(result.stderr)
+    apply(patch)
+    apply(mac_patch)
     print('Prepared the released native Melee sources.')
 
 

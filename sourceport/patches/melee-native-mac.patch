@@ -1,0 +1,126 @@
+--- a/libs/dolphin/src/dolphin/thp/THPDec.c
++++ b/libs/dolphin/src/dolphin/thp/THPDec.c
+@@ -2825,7 +2825,7 @@
+             }
+             d->file = end;
+             *statusOut = 0;
+-            return (THPFileInfo*) (mu_uptr) mu_addr32(d);
++            return (THPFileInfo*) MU_WIDEN(mu_addr32(d));
+         } else if (marker < 0xE0 || (marker > 0xEF && marker != 0xFE)) {
+             *statusOut = 11;
+             return NULL;
+--- a/src/melee/ft/ftdrawcommon.c
++++ b/src/melee/ft/ftdrawcommon.c
+@@ -123,7 +123,7 @@
+     /* Arcade look "Show attack hitboxes" (the always-display hitbox code's first two lines): the
+      * attack bubbles of every fighter; the hurtbox, reflect, absorb and shield bubbles below keep
+      * their own flag. The flag byte is match state and stays as it is. */
+-    if ((fighter->x21FC_flag.b6 != 0 || *(volatile u32*) 0x800805FC == 0x60000000 || mu_arcade_hitboxes()) &&
++    if ((fighter->x21FC_flag.b6 != 0 || *(volatile u32*) MU_WIDEN(0x800805FC) == 0x60000000 || mu_arcade_hitboxes()) &&
+         Bam_DrawHitboxes()) {
+ #elif defined(MU_NATIVE)
+     /* Arcade look "Show attack hitboxes": as in the branch above. */
+@@ -160,7 +160,7 @@
+ #endif
+ #if MU_ROGUE  /* rogueMelee + Melee Maker */
+     }
+-    if ((fighter->x21FC_flag.b6 != 0 || *(volatile u32*) 0x800805FC == 0x60000000) && Bam_DrawHurtboxes()) {
++    if ((fighter->x21FC_flag.b6 != 0 || *(volatile u32*) MU_WIDEN(0x800805FC) == 0x60000000) && Bam_DrawHurtboxes()) {
+ #elif defined(MU_NATIVE)
+     }
+     if (fighter->x21FC_flag.b6 != 0) {
+--- a/src/melee/ft/kinds/ftCommon/ftCo_Thrown.c
++++ b/src/melee/ft/kinds/ftCommon/ftCo_Thrown.c
+@@ -161,7 +161,7 @@
+ {
+     Fighter* fp = GET_FIGHTER(gobj);
+ #ifdef MU_NATIVE
+-    ftColl_8007B8CC(fp, (HSD_GObj*) (uintptr_t) fp->mv.co.fighterthrow.victim);
++    ftColl_8007B8CC(fp, (HSD_GObj*) MU_WIDEN(fp->mv.co.fighterthrow.victim));
+ #else
+     ftColl_8007B8CC(fp, fp->mv.co.fighterthrow.victim);
+ #endif
+--- a/src/melee/ft/kinds/ftPikachu/ftpikachuspeciallw.c
++++ b/src/melee/ft/kinds/ftPikachu/ftpikachuspeciallw.c
+@@ -22,7 +22,7 @@
+ #include <melee/it/kinds/itpikachuthunder.h>
+ 
+ #ifdef MU_NATIVE
+-#define PK_THUNDER(fp) ((Item_GObj*) (uintptr_t) (fp)->mv.pk.speciallw.x0)
++#define PK_THUNDER(fp) ((Item_GObj*) MU_WIDEN((fp)->mv.pk.speciallw.x0))
+ #define PK_SET_THUNDER(fp, gobj) ((fp)->mv.pk.speciallw.x0 = (u32) (uintptr_t) (gobj))
+ #else
+ #define PK_THUNDER(fp) ((fp)->mv.pk.speciallw.x0)
+--- a/src/melee/gr/grhomerun.c
++++ b/src/melee/gr/grhomerun.c
+@@ -382,7 +382,7 @@
+         y = -pos2.y + 0.0F * (grHr_804D6AE4 * scale);
+ 
+         scale = Ground_801C0498();
+-        text = (HSD_Text*) (intptr_t) gp->u.unk.xCC;
++        text = (HSD_Text*) MU_Z(gp->u.unk.xCC);
+         text->pos_x = pos2.x + (-1.0F) * (grHr_804D6AE4 * scale);
+         text->pos_y = y;
+         text->pos_z = z;
+--- a/src/melee/mn/mnnamenew.c
++++ b/src/melee/mn/mnnamenew.c
+@@ -439,7 +439,7 @@
+         u32 desc = (u32) root[0xC] << 24 | (u32) root[0xD] << 16 |
+                    (u32) root[0xE] << 8 | root[0xF];
+         HSD_GObj* gobj = GObj_Create(4, 5, 0x80);
+-        HSD_JObj* jobj = HSD_JObjLoadJoint((HSD_Joint*) (uintptr_t) desc);
++        HSD_JObj* jobj = HSD_JObjLoadJoint((HSD_Joint*) MU_WIDEN(desc));
+         HSD_GObjObject_80390A70(gobj, HSD_GObj_JObjKind, jobj);
+         GObj_SetupGXLink(gobj, HSD_GObj_JObjCallback, 4, 0x80);
+     }
+--- a/src/sysdolphin/baselib/hsd_3A76.c
++++ b/src/sysdolphin/baselib/hsd_3A76.c
+@@ -54,8 +54,8 @@
+ #ifdef MU_NATIVE
+     /* The native archive loader relocates pointer slots as big-endian 32-bit
+      * console addresses (mu_disc.h), so the operand is four bytes. */
+-    return (u8*) (uintptr_t) (((u32) p[0] << 24) | ((u32) p[1] << 16) |
+-                              ((u32) p[2] << 8) | (u32) p[3]);
++    return (u8*) MU_WIDEN(((u32) p[0] << 24) | ((u32) p[1] << 16) |
++                          ((u32) p[2] << 8) | (u32) p[3]);
+ #else
+     u8* target;
+ 
+@@ -549,7 +549,7 @@
+         }
+         text = HSD_GObjGetUserData(gobj);
+     } else {
+-        text = (HSD_Text*) (uintptr_t) (u32) pass;
++        text = (HSD_Text*) MU_WIDEN((u32) pass);
+     }
+     if (text->hidden == 0 && text->sis_buffer != NULL) {
+         u8 *sis_cursor = text->sis_buffer;
+--- a/src/sysdolphin/baselib/particle.c
++++ b/src/sysdolphin/baselib/particle.c
+@@ -215,7 +215,7 @@
+     for (i = 0; i < count; i++) {
+         const u32 cmd = ps_word(list, i);
+         if (cmd != 0) {
+-            void* cl = (void*) (mu_uptr) cmd;
++            void* cl = (void*) MU_WIDEN(cmd);
+             ps_set_word(cl, 2, (ps_word(cl, 2) & 0xF1FFFFFF) | 0x08000000);
+         }
+     }
+@@ -225,7 +225,7 @@
+         ps_relocate(texBank, i, texBank);
+     }
+     for (i = 1; i <= num_groups; i++) {
+-        HSD_PSTexGroup* tg = (HSD_PSTexGroup*) (mu_uptr) ps_word(texBank, i);
++        HSD_PSTexGroup* tg = (HSD_PSTexGroup*) MU_WIDEN(ps_word(texBank, i));
+         u32 first, end, ti;
+         if (tg == NULL) {
+             continue;
+@@ -256,7 +256,7 @@
+         HSD_PSFormGroup* fg;
+         u32 fi;
+         ps_relocate(formBank, i, formBank);
+-        fg = (HSD_PSFormGroup*) (mu_uptr) ps_word(formBank, i);
++        fg = (HSD_PSFormGroup*) MU_WIDEN(ps_word(formBank, i));
+         if (fg == NULL) {
+             continue;
+         }

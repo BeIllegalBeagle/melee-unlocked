@@ -86,7 +86,7 @@ int BamCache_FreeRecords(void)
 }
 
 /* Preloader idle: no file queued or loading, no compaction running. */
-#define PRELOAD_CACHE ((u8*) 0x80432078)
+#define PRELOAD_CACHE ((u8*) MU_WIDEN(0x80432078))
 static int preloader_idle(void)
 {
     int i;
@@ -245,7 +245,7 @@ void* BamCache_Alloc(int ram, u32 size)
     if (a->hi - a->lo < size) return NULL;
     p = a->lo;
     a->lo += size;
-    return (void*) (uintptr_t) p;
+    return (void*) MU_WIDEN(p);
 }
 
 /* Temporary main-RAM space (top of the AllM block), dropped by TempReset. */
@@ -258,7 +258,7 @@ void* BamCache_TempAlloc(u32 size)
     size = (size + 31) & ~31U;
     if (a->hi - a->lo < size) return NULL;
     a->hi -= size;
-    return (void*) (uintptr_t) a->hi;
+    return (void*) MU_WIDEN(a->hi);
 }
 
 void BamCache_TempReset(void)

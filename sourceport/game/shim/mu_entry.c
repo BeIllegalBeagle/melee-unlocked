@@ -292,7 +292,7 @@ extern char __data_start__[], __data_end__[], __bss_start__[], __bss_end__[];
 static uint32_t mu_state_regions(MuStateRegion* out, uint32_t capacity)
 {
     MuStateRegion regions[3] = {
-        {(void*) 0x80000000u, mu_host->mem1_size()},
+        {(void*) MU_WIDEN(0x80000000u), mu_host->mem1_size()},
         {__data_start__, (uint32_t) (__data_end__ - __data_start__)},
         {__bss_start__, (uint32_t) (__bss_end__ - __bss_start__)},
     };
