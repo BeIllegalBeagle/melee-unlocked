@@ -61,6 +61,12 @@ inline std::set<uint32_t> visual_only_models(std::string stage_file) {
   // their animations 0 to 8 and waits for each to end (animate_all) before the next step, which draws
   // random numbers. A skin's copy with other animations crashed the swap (0.9.991 crash report).
   if (stage_file == "grnla.dat" || stage_file == "grnla.usd") return {1, 2};
+  // Dream Land, groldpupupu.c: 3 (backdrop: animation 0 and a material flag, grOldPupupu_80211110),
+  // 4 (animation 0, grOldPupupu_80210B04) and 6 (the flowers along the front: animation 0 or 1 when
+  // Whispy blows, grOldPupupu_80211C1C) have empty or animation-only updates, no collision and no
+  // random draws; nothing else finds them by index. A skin that sank the flowers below the ground
+  // had them back on top online when its joints took the original's places (ImpX's disc, 11-23).
+  if (stage_file == "grop.dat" || stage_file == "grop.usd") return {3, 4, 6};
   return {};
 }
 
