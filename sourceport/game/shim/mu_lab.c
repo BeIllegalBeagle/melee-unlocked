@@ -343,6 +343,8 @@ static u32 lab_test_presses(void)
 void mu_lab_frame_begin(void)
 {
     u32 pressed;
+    void mu_redo_frame_begin(void);
+    mu_redo_frame_begin();   /* tick re-run (shim/mu_redo.c): back to the kept state first */
     if (!lab_on()) {
         lab_bubbles_release();
         return;

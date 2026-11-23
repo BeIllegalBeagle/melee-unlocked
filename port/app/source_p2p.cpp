@@ -17,6 +17,8 @@
 #include <thread>
 #include <vector>
 #include "early_input.h"
+#include "late_read.h"
+#include "test_env.h"
 
 namespace source_p2p {
 namespace {
@@ -449,6 +451,26 @@ void start(bool harness) {
   mu_net::SessionCallbacks callbacks;
   callbacks.log = [](const char* line) { host::log("p2p: %s", line); };
   callbacks.set_emulation_speed = [](double speed) { g().speed.store(speed, std::memory_order_relaxed); };
+  // Late controller read (host/late_read.h): MELEE_ONLINE_LATE_READ=0 turns it off. Tests:
+  // MELEE_TEST_LATE_READ=1 takes it whatever the ping, MELEE_TEST_LATE_HOLD_MS fixes the wait.
+  static host::late_read::Control late_control;
+  static const bool late_on = [] { const char* v = std::getenv("MELEE_ONLINE_LATE_READ"); return !(v && *v == '0'); }();
+  if (late_on) {
+    callbacks.late_offer = [](int delay, uint32_t ping_us) {
+      static const bool forced = [] { const char* v = host::test_env::getenv("MELEE_TEST_LATE_READ"); return v && *v == '1'; }();
+      return forced || (ping_us > 0 && host::late_read::has_room(delay, (double)ping_us / 1000.0));
+    };
+    callbacks.late_hold = [](int32_t frame, bool have_early, double early_ms) {
+      static const double fixed = [] { const char* v = host::test_env::getenv("MELEE_TEST_LATE_HOLD_MS"); return v && *v ? std::atof(v) : -1.0; }();
+      if (frame <= 1) late_control.reset();   // a new game
+      const double wait = late_control.step(frame, have_early, early_ms, host::last_sim_frame_work_ms(), host::last_sim_frame_late(), fixed);
+      const double waited = host::tick_hold(wait / 1000.0) * 1000.0;
+      late_control.note_waited(waited);
+      if (late_control.frames() % 600 == 0)
+        host::log("p2p: late controller read: wait %.1f ms now (%.1f waited this frame), %.1f on average; remote pads at least %.1f ms early without it; work %.1f ms; %.1f ms sooner than the setup's delay",
+                  wait, waited, late_control.average_hold_ms(), late_control.least_early_ms(), late_control.work_ms(), late_control.saved_ms());
+    };
+  }
   // A launcher starts the two games seconds apart and each boots for several more before it gets
   // here, so it asks for a longer wait than two games started by hand at the same moment need.
   mu_net::SessionOptions session_options;
