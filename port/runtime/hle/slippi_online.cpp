@@ -909,11 +909,13 @@ static int offer(int chosen) {
   const double work = host::recent_sim_frame_work_ms();
   if (!on) {
     if (ping <= 0) return chosen;   // no ping yet: the chosen delay as it is
-    on = has_room(chosen, ping, work);
+    on = has_room(chosen, ping, work) && host::recent_sim_frames_steady();
     // A busy computer is not a final "no" either: the next ask looks again, the match takes one answer.
     if (!on && has_room(chosen, ping)) {
       static unsigned busy_logged = 0;
-      if (busy_logged++ % 300 == 0) host::log("slippi: late controller read: not now, frames need %.1f ms of work (ping %d ms)", work, ping);
+      if (busy_logged++ % 300 == 0)
+        host::log("slippi: late controller read: not now, this computer's frames are %s (%.1f ms of work, ping %d ms)",
+                  host::recent_sim_frames_steady() ? "too busy for the wait" : "missing their 60 Hz place, or too few seen yet", work, ping);
       return chosen;
     }
   }

@@ -258,6 +258,7 @@ void report_sim_work();                // once, at orderly quit; completed inter
 double last_sim_frame_work_ms();       // the same frame without its in-frame pacing waits: the thread's own work            // work time of the most recent simulation frame (sleep excluded)
 bool last_sim_frame_late();          // the most recent frame finished after its 60 Hz deadline (the pacer had nothing to wait)
 double recent_sim_frame_work_ms();   // what 19 of 20 of the last 120 frames' work needed (menus included); any thread
+bool recent_sim_frames_steady();     // at least 60 frames seen and at most 1 in 20 of the last 120 missed its 60 Hz place
 
 // ---- time ----
 constexpr uint64_t TB_HZ = 40500000ull;   // bus clock / 4

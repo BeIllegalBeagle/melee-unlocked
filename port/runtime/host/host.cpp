@@ -3415,6 +3415,22 @@ static void note_recent_work(double ms) {
   g_recent_work[n % g_recent_work.size()].store((float)ms, std::memory_order_relaxed);
   g_recent_work_count.store(n + 1, std::memory_order_relaxed);
 }
+// Which of the last 120 frames missed their place on the 60 Hz schedule: a stall shows here even when
+// most frames are light (measured 11-23: a 63 ms frame in the first second, then frames of 13 to 52 ms).
+static std::array<std::atomic<bool>, 120> g_recent_late{};
+static std::atomic<unsigned> g_recent_late_count{0};
+static void note_recent_late(bool late) {
+  const unsigned n = g_recent_late_count.load(std::memory_order_relaxed);
+  g_recent_late[n % g_recent_late.size()].store(late, std::memory_order_relaxed);
+  g_recent_late_count.store(n + 1, std::memory_order_relaxed);
+}
+bool recent_sim_frames_steady() {
+  const unsigned have = std::min<unsigned>(g_recent_late_count.load(std::memory_order_relaxed), (unsigned)g_recent_late.size());
+  if (have < 60) return false;   // too little seen yet to say
+  unsigned late = 0;
+  for (unsigned i = 0; i < have; ++i) late += g_recent_late[i].load(std::memory_order_relaxed) ? 1u : 0u;
+  return late * 20 <= have;      // at most 1 frame in 20 late
+}
 double recent_sim_frame_work_ms() {
   const unsigned have = std::min<unsigned>(g_recent_work_count.load(std::memory_order_relaxed), (unsigned)g_recent_work.size());
   if (!have) return 0.0;
@@ -3831,6 +3847,7 @@ void retrace() {
     g_next_frame += std::chrono::microseconds((long long)(16667.0 / g_emulation_speed));
     auto now = std::chrono::steady_clock::now();
     g_last_sim_late = !(g_next_frame > now);   // no time left to wait: the frame finished after its deadline
+    note_recent_late(g_last_sim_late);
     if (g_next_frame > now) wait_for_tick(g_next_frame);
     else if (now - g_next_frame > std::chrono::milliseconds(34)) g_next_frame = now;   // after a stall, resume at 60 Hz instead of sprinting to catch up (audio would crackle)
     g_frame_time = std::chrono::duration<double>(g_next_frame.time_since_epoch()).count();

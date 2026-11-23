@@ -28,10 +28,14 @@ class LateReadWiringTest(unittest.TestCase):
 
     def test_needs_a_ping_with_room(self):
         self.assertIn("if (ping <= 0) return chosen;", self.block)
-        self.assertIn("on = has_room(chosen, ping, work);", self.block)
+        self.assertIn("on = has_room(chosen, ping, work) && host::recent_sim_frames_steady();", self.block)
         self.assertIn("const double work = host::recent_sim_frame_work_ms();", self.block)
-        self.assertIn("host::late_read::has_room(delay, (double)ping_us / 1000.0, host::recent_sim_frame_work_ms())",
-                      source("port/app/source_p2p.cpp"))
+        p2p = source("port/app/source_p2p.cpp")
+        self.assertIn("host::late_read::has_room(delay, (double)ping_us / 1000.0, host::recent_sim_frame_work_ms()) &&", p2p)
+        self.assertIn("host::recent_sim_frames_steady());", p2p)
+        host_cpp = source("port/runtime/host/host.cpp")
+        self.assertIn("note_recent_late(g_last_sim_late);", host_cpp)
+        self.assertIn("return late * 20 <= have;", host_cpp)
         self.assertIn("if (!on && !measured) return chosen;", self.block)
         self.assertIn("const double needed = kGuardMs - ((chosen_delay - 1) * kFrameMs - ping_ms / 2.0);", self.control)
         self.assertIn("return chosen_delay >= 2 && needed <= longest - kRoomReserveMs;", self.control)
