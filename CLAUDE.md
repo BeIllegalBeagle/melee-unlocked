@@ -42,19 +42,33 @@ Each build takes a few minutes clean; later runs rebuild only what changed.
   `lldb -b -o run -k "bt 24" -- <app> ...` and map game frames with the cross addr2line on
   `melee_game.dbg` (subtract the base, logged as `Mac layout: owned window`). Narrow int-to-pointer casts
   show up as `-Wint-to-pointer-cast` when the game is compiled without `-w`.
+- A 32-bit word that becomes a pointer-sized integer, such as an `HSD_IDKey`, needs `MU_WIDEN` too.
+  Nothing faults or warns there: the lookup just misses. One unwidened ID lookup in `aobj.c` made
+  Randall on Yoshi's Story follow a detached copy of its path without the stage's scale, and online
+  games there desynced against x86-64.
 - Decomp changes for the Mac live in `sourceport/patches/melee-native-mac.patch`, applied after the
   released `melee-native.patch` by `tools/prepare_native_sources.py`. Leave upstream's patch untouched.
 - On x86-64 these changes must compile to the same code (`MU_WIDEN` is the old zero-extension there).
   Compare the x86-64 library's functions against a reference build after changing game code.
-- AArch64 GCC aligns static data to 8 where x86-64 GCC uses 32 for anything of 32 bytes or more, and the
-  game's DMA buffers depend on it. `port/mac/align_like_x86.py` (the AArch64 build's compiler launcher)
-  restores that.
+- `port/mac/aarch64_like_x86.py`, the AArch64 build's compiler launcher, makes two things behave as
+  they do with x86-64 GCC, and the game depends on both:
+  - Static data alignment. AArch64 GCC aligns static data to 8, where x86-64 GCC uses 32 for anything of
+    32 bytes or more. The game's DMA buffers depend on the 32-byte alignment.
+  - Float-to-unsigned conversion. AArch64's `fcvtzu` turns a negative value into 0. x86-64 and the
+    console keep the low bits of the signed result, so (u8)(-128.0f) is 0x80. With `fcvtzu`, Nana
+    ignored Popo's stick held left or down, and every Ice Climbers game desynced against x86-64. The
+    launcher compiles each unit to assembly and replaces every `fcvtzu` before assembling.
+  - Signed conversions (`fcvtzs`) still differ from x86-64 for NaN and out-of-range values. The console
+    differs from x86-64 there too.
+  - Every game object depends on the launcher, so editing it rebuilds the library.
 - The loader only accepts imports listed in its `IMPORT(...)` table. A new upstream game that fails with
   "unlisted strong import" needs that import added there.
 - The game library is built with Doubles and Squad Strike on, as in the Linux release, so the host must
   be built with `build_full.py --squad-strike --doubles`. `build_all.sh` does both.
-- Upstream builds the Linux game with GCC 14, and this fork uses GCC 15.2. Offline play is fine. Online
-  play against other platforms is not yet verified to stay in sync.
+- Upstream builds the Linux game with GCC 14 (Ubuntu 14.2), and this fork uses GCC 15.2.
+  `port/mac/release_parity.py` loads upstream's own Linux release library in the x86-64 host. On
+  1.0.14 it matched both Mac builds exactly on every `parity_*` script that reaches a match.
+  Not yet verified: the Windows build (MinGW GCC 15.3), and real matchmaking against other platforms.
 - The GameCube adapter (Wii U mode) is read through libusb when `../deps/libusb` exists. This is the
   `MELEE_MAC_GC_ADAPTER` path in `port/runtime/host/gc_adapter.cpp`. Like Dolphin, it needs
   GCAdapterDriver installed and never detaches the kernel driver on macOS. Only one program can hold
@@ -77,3 +91,20 @@ Each build takes a few minutes clean; later runs rebuild only what changed.
   frames must show 0 differing values. Menu frames are excluded; their RNG also differs run to run.
 - `port/mac/elf_loader_test.cpp` with `port/mac/elf_abi_probe.c` checks the loader, including the
   printf-family bridge between the Linux and Apple AArch64 calling conventions.
+- Online sync between two builds:
+  - Run `tools/p2p_pair.py --exe <x86 app binary> --exe-p2 <arm64 app binary> --chars 14/0:4/0
+    --stage 3`, with throwaway HOME/XDG and `--extra-p1 "--user-dir A" --extra-p2 "--user-dir B"`.
+    It plays a rollback match over loopback and needs 0 mismatched checksums. Add `--lag-ms 30
+    --jitter-ms 10 --loss 2` for a bad connection.
+  - The parity scripts have no Ice Climbers and no Pokemon Stadium, so run this pairing too. It
+    caught the `fcvtzu` desync. They have no Yoshi's Story either: `--chars 3/0:13/0 --stage 8`
+    caught the Randall desync.
+  - `--games` above 1 never starts game 2 on any build, upstream's release library included:
+    `p2p_bot.txt` presses nothing on the post-game screen (scene 0E:03).
+- Against upstream's release: `python3 port/mac/release_parity.py --iso <iso>` downloads the Linux
+  release named by VERSION. It runs every `parity_*.txt` on that release's library and on both Mac apps,
+  and compares the results. Run it after merging a new upstream version.
+- To find the first divergence, play the `.slp` a pair test saved (under each `--user-dir`'s `Replays/`)
+  on both apps with `--replay <slp> --headless --fast --state-digest <csv>`. `MELEE_TRACE_NATIVE_RNG=a:b`
+  logs every random draw in retraces a to b. A fighter the digest does not cover, such as Nana, shows up
+  when you compare the two recordings' pre-frame and post-frame events.

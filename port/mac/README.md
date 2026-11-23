@@ -20,8 +20,11 @@ release, recompiles the headers from the disc, then runs
 `build_full.py --arch <arch> --squad-strike --doubles`. The apps are
 `build-mac-full-arm64-squad/MeleeUnlocked.app` and
 `build-mac-full-squad/MeleeUnlocked.app`; later runs rebuild only what changed.
-The official Linux game is built with GCC 14 and these with GCC 15.2, so online
-play against other platforms is not yet verified to stay in sync.
+The official Linux game is built with GCC 14 and these with GCC 15.2.
+`release_parity.py` loads that release's own `melee_game.so` in the x86-64 host,
+in a copy whose stack canaries are fixed at 0. It compares the game state on every
+parity script against both Mac apps (see "Checking sync" below). The Windows
+build and real matchmaking are not yet verified.
 
 ### The native Apple silicon build
 
@@ -34,11 +37,19 @@ first free 4 GB-aligned base instead and the game widens each word against it
 (`sourceport/game/include/mu_window.h`): a word holds the same number on both
 architectures, and B is 0 on x86-64, whose code is unchanged.
 
-- AArch64 game flags: `-ffixed-x18` (Apple's platform register), `-fsigned-char`
-  (as x86-64), `-mno-outline-atomics` (no `getauxval`), and `-fdata-sections
-  -fno-section-anchors` for `align_like_x86.py`, which gives every static object
-  of 32 bytes or more the 32-byte alignment x86-64 GCC gives it (the game's DMA
-  buffers rely on that).
+- AArch64 game flags:
+  - `-ffixed-x18`: Apple's platform register.
+  - `-fsigned-char`: as on x86-64.
+  - `-mno-outline-atomics`: so there is no `getauxval` import.
+  - `-fdata-sections -fno-section-anchors`: for the compiler launcher
+    `aarch64_like_x86.py`.
+- `aarch64_like_x86.py` does two things:
+  - It gives every static object of 32 bytes or more the 32-byte alignment that
+    x86-64 GCC gives it. The game's DMA buffers rely on that alignment.
+  - It converts floats to unsigned integers the way x86-64 and the console do,
+    keeping the low bits of the signed result. AArch64's `fcvtzu` turns a negative
+    value into 0, so Nana ignored Popo's stick held left or down. The launcher
+    compiles each unit to assembly and replaces every `fcvtzu`.
 - AArch64 Linux and Apple pass variadic arguments differently; the loader
   bridges the game's printf-family imports (`elf_loader_test.cpp` with
   `elf_abi_probe.c` checks it on both architectures), and the host takes the two
@@ -46,14 +57,56 @@ architectures, and B is 0 on x86-64, whose code is unchanged.
 - A word widened without the base points into the unmapped low 4 GB and stops
   at once, with the faulting console address. A narrow int-to-pointer cast
   shows up as `-Wint-to-pointer-cast` when the game is built without `-w`.
+- A word that becomes a pointer-sized integer key (`HSD_IDKey`) gives no such
+  sign. Unwidened, the ID lookup misses. The animation loader's lookup of a
+  path joint did that: it loaded a detached copy of the joint, so Randall on
+  Yoshi's Story moved without the stage's scale and online games there desynced
+  against x86-64.
 - Under the Hardened Runtime (needed for notarization) the loader's mapped code
   needs `com.apple.security.cs.allow-unsigned-executable-memory`; local builds
   are not hardened.
+- The app's Info.plist puts it in the games category with `LSSupportsGameMode`,
+  so macOS turns on Game Mode when it is full screen, and names the app's own
+  architecture in `LSArchitecturePriority`.
 
-Checked 2026-11-23 on an M5 with macOS 27: the headless parity run
-(`parity_vs.txt`, `--fast --vanilla-game --vanilla-only`) gives identical state
-digests for the x86-64 and arm64 builds, 7,200 match frames x 76 fields, and
-the native game step takes about two thirds of the Rosetta one.
+Checked 2026-11-23 on an M5 with macOS 27, against upstream's 1.0.14 Linux
+release:
+- The headless parity scripts (`--fast --vanilla-game --vanilla-only`) give
+  identical state digests for that release's library and both Mac builds.
+- Rollback matches between the x86-64 and arm64 apps over loopback
+  (`tools/p2p_pair.py --exe-p2`) agree on every checksum, including with lag,
+  jitter and packet loss:
+  - Ice Climbers vs Kirby on Pokémon Stadium
+  - Peach vs Link on Fountain of Dreams
+  - Mr. Game & Watch vs Pikachu, Fox vs Marth, and Ice Climbers vs Jigglypuff
+    on Yoshi's Story
+  - Samus vs Ganondorf on Battlefield
+  - Yoshi vs Mewtwo on Dream Land
+  - Falco vs Sheik on Final Destination
+- The native game step takes about two thirds of the time it takes under Rosetta.
+
+### Checking sync
+
+Give every run throwaway `HOME` and `XDG_*` folders and `--user-dir`, so that no
+test signs in to the Slippi account in your home folder.
+
+```sh
+python3 port/mac/release_parity.py --iso path/to/melee.iso   # vs upstream's Linux release
+python3 tools/p2p_pair.py --iso path/to/melee.iso \
+  --exe build-mac-full-squad/MeleeUnlocked.app/Contents/MacOS/MeleeUnlocked \
+  --exe-p2 build-mac-full-arm64-squad/MeleeUnlocked.app/Contents/MacOS/MeleeUnlocked \
+  --chars 14/0:4/0 --stage 3 --lag-ms 30 --jitter-ms 10 --loss 2 \
+  --extra-p1 "--user-dir /tmp/a" --extra-p2 "--user-dir /tmp/b"
+```
+
+`tools/p2p_pair.py --games` above 1 stops after game 1 on every build,
+upstream's release library included: the bot script presses nothing on the
+post-game screen.
+
+`release_parity.py` downloads the Linux release named by `VERSION`. The Mac
+loader refuses stack-protector code, so the script patches a copy of the
+release's library for the test: each canary load becomes `mov $0` and each
+check becomes `test`. The canary takes no part in the game's arithmetic.
 
 The GameCube adapter (Wii U mode) is opened through libusb, as Slippi Dolphin
 does. Like Dolphin, it needs [GCAdapterDriver](https://github.com/secretkeysio/GCAdapterDriver)
