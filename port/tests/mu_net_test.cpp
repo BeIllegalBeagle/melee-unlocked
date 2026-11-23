@@ -1209,6 +1209,8 @@ static void test_late_read() {
   MemoryLink la(wire, true), lb(wire, false);
   Peer a, b;
   a.late = true;
+  a.max_games = 2; a.pool = kTestPool;
+  b.max_games = 0; b.pool = kTestPool;
   a.setup(clock, 1);
   b.setup(clock, 2);
   const SessionDescriptor d = test_descriptor();
@@ -1232,6 +1234,27 @@ static void test_late_read() {
   EXPECT(ms.size() == kMatchStateReplySize && ms[9] == 1);   // while the game runs: what it took
   GameResult ra, rb;
   EXPECT(a.session.result(ra) && b.session.result(rb) && ra.transcript_digest == rb.transcript_digest);
+  EXPECT(a.session.counters().checksum_mismatches == 0 && b.session.counters().checksum_mismatches == 0);
+
+  // The next game over the same connection is offered the lower delay again and waits again.
+  report_end(a);
+  report_end(b);
+  pump(a, b, clock);
+  EXPECT(a.session.next_game() == NextGame::Agreed && b.session.next_game() == NextGame::Agreed);
+  EXPECT(a.session.begin_next_game() && b.session.begin_next_game());
+  a.session.match_state_reply(ms);
+  EXPECT(ms.size() == kMatchStateReplySize && ms[9] == 1);
+  b.session.match_state_reply(ms);
+  EXPECT(ms.size() == kMatchStateReplySize && ms[9] == 2);
+  FakeGame ga2, gb2;
+  ga2.session = &a.session; ga2.slot = 0; ga2.delay = 1; ga2.peer_delay = 2;
+  gb2.session = &b.session; gb2.slot = 1; gb2.delay = 2; gb2.peer_delay = 1;
+  const int calls_before = a.late_calls;
+  play_frames(a, b, ga2, gb2, clock, 150);
+  EXPECT(a.late_calls == calls_before + 150 && b.late_calls == 0);
+  GameResult ra2, rb2;
+  EXPECT(a.session.result(ra2) && b.session.result(rb2) && ra2.transcript_digest == rb2.transcript_digest);
+  EXPECT(ra2.transcript_digest != ra.transcript_digest);
   EXPECT(a.session.counters().checksum_mismatches == 0 && b.session.counters().checksum_mismatches == 0);
 
   // A game that took the setup's delay although the lower one was offered does not wait.
