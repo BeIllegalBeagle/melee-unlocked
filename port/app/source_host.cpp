@@ -669,7 +669,10 @@ void compute_pack_skin_verdicts(const std::unordered_map<std::string, int32_t>& 
     const bool costume = skins::is_costume_file(file.path);
     const bool stage = skins::is_stage_file(file.path);
     const bool music = skins::is_music_file(file.path);
-    if (!costume && !stage && !music) continue;
+    // Recoloured items, effects or menu pictures in any other archive (a pack's Peach and Sheik files,
+    // its stage select): served online when only their textures changed.
+    const bool textures = !costume && !stage && !music && skins::is_archive_file(file.path);
+    if (!costume && !stage && !music && !textures) continue;
     const auto now = g_paths.find(file.path);
     const auto base = base_paths.find(file.path);
     if (now == g_paths.end() || base == base_paths.end() || base_fst[base->second].dir) continue;
@@ -702,6 +705,7 @@ void compute_pack_skin_verdicts(const std::unordered_map<std::string, int32_t>& 
       std::string detail;
       verdict.served = costume ? host::cosmetics::costume_skeleton_matches(clean, pack, &detail)
                      : stage ? host::cosmetics::stage_safety::matches(clean, pack, &detail)
+                     : textures ? host::cosmetics::file_textures_only(clean, pack, &detail)
                              : skins::music_is_valid(pack, &detail);
       verdict.reason = host::cosmetics::online_reason_short(detail);
       // A stage that is not the same file may still be the same stage: the pack's look drawn over

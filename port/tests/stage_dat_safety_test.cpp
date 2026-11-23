@@ -118,10 +118,12 @@ int main(int argc,char** argv) {
     check(word(out.data()+32+320+16)!=0,"the near joint shows the skin mesh");
     check(word(out.data()+32+320+48)==0x42080000u,"the near joint keeps the original transform");
     check(matches(clean,out,&reason),"near pairing preserves gameplay");
-    put(skin,32+352+48,0x42480000u);    // 50.0: another joint, not this one
-    // (The fixture's child shares its parent's mesh, so the graft itself may pass; the child must not
-    // be paired: it shows no skin mesh of its own.)
-    check(!graft_visuals(clean,skin,&out,&note) || word(out.data()+32+320+16)==0,"a joint moved far is not paired");
+    put(skin,32+352+48,0x42480000u);    // 50.0: moved far, at the same place in a branch of the same shape
+    // Paired by its place (a custom Onett lowered two groups by 7 units, 11-23): drawn at the original's
+    // transform, so its art sits on the original's collision; the gameplay proof still has to pass.
+    check(graft_visuals(clean,skin,&out,&note) && word(out.data()+32+320+16)!=0,"a joint moved far at the same place is paired");
+    check(word(out.data()+32+320+48)==0x42080000u,"the far joint keeps the original transform");
+    check(matches(clean,out,&reason),"place pairing preserves gameplay");
   }
   {
     using namespace host::cosmetics::stage_safety;
