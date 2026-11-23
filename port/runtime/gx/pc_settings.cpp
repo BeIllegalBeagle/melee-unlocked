@@ -70,6 +70,7 @@ namespace gecko { int option_screen_shake_percent = 100; }
 #include "yougame_console_entry.h"
 #include <chrono>
 #include "yougame_mode_policy.h"
+#include "looks_disc.h"
 #include "yougame_update.h"
 #ifdef YOUGAME_AGENT_TEST_HOOK
 #include "yougame_agent_test.h"
@@ -172,6 +173,17 @@ static void apply_rtx_preset(RenderOptions& o) {
   o.rtx_skin = o.rtx_stage_shade = true;
   o.rtx_glossy_floors = p.floor > 0;
   if (o.rtx_preset == 4) o.rtx_photo_mode = true;
+}
+// The disc a looks install patches: the game's own, else (Settings opened alone from the launcher,
+// with no disc) the one the launcher plays with. looks_disc.h has the order.
+static std::string settings_looks_disc() {
+  std::filesystem::path exe_dir, local;
+#ifdef _WIN32
+  wchar_t exe[MAX_PATH] = {};
+  if (GetModuleFileNameW(nullptr, exe, MAX_PATH)) exe_dir = std::filesystem::path(exe).parent_path();
+  if (const wchar_t* l = _wgetenv(L"LOCALAPPDATA")) local = l;
+#endif
+  return ::host::looks_disc::pick(host::options.mod_base_iso, host::options.iso, exe_dir, local);
 }
 namespace {
 std::atomic<uint32_t> g_guest_options_selection{0};
@@ -7509,7 +7521,7 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
           } else {
             ImGui::BeginDisabled(s.any_busy);
             if (settings_widgets::Button("Install")) {
-              const std::string disc = host::options.mod_base_iso.empty() ? host::options.iso : host::options.mod_base_iso;
+              const std::string disc = settings_looks_disc();
               std::string tool;
 #ifdef _WIN32
               wchar_t exe[MAX_PATH] = {};
@@ -7704,7 +7716,7 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
       if (settings_widgets::Button(building.load() ? "Preparing..." : "Prepare mod artwork")) {
         building = true;
         const std::string folder = patcher_folder;
-        const std::string disc = host::options.mod_base_iso.empty() ? host::options.iso : host::options.mod_base_iso;
+        const std::string disc = settings_looks_disc();
         std::string tool;
 #ifdef _WIN32
         wchar_t exe[MAX_PATH] = {};
