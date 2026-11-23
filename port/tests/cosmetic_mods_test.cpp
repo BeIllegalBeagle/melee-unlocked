@@ -838,6 +838,25 @@ int main(int argc, char** argv) {
     check(!host::cosmetics::testing::costume_skeleton_matches(vanilla, skeleton_dat(0x2, 5.5f, false), &why) &&
               online_reason_short(why) == "bone 1: rest pose differs (moved)",
           "costume skeleton: a moved bone is named and said to have moved");
+    {
+      // One rotation written two ways: (x, y, z) and (x - pi, -pi - y, z - pi) turn a bone the same, and
+      // model tools pick either (a Falco skin's bone 40, 11-23). A real turn still keeps it offline.
+      const auto turned = [&](float x, float y, float z) {
+        auto dat = skeleton_dat(0x2, 5.0f, false);
+        const float r[3] = {x, y, z};
+        for (int i = 0; i < 3; ++i) { uint32_t bits; std::memcpy(&bits, &r[i], 4); be32(dat, 0x20 + 0x40 + 0x14 + i * 4, bits); }
+        return dat;
+      };
+      const float pi = 3.14159265f;
+      const auto standard = turned(0.8203f, -2.4086f, 0.8203f);
+      check(host::cosmetics::testing::costume_skeleton_matches(standard, turned(0.8203f - pi, -pi + 2.4086f, 0.8203f - pi), &why),
+            "costume skeleton: the same rotation in other angles stays online");
+      check(host::cosmetics::testing::costume_skeleton_matches(turned(0.f, 0.f, pi), turned(0.f, 0.f, -pi), &why),
+            "costume skeleton: a half turn either way is the same");
+      check(!host::cosmetics::testing::costume_skeleton_matches(standard, turned(0.8203f, -2.4086f, 1.1f), &why) &&
+                online_reason_short(why) == "bone 1: rest pose differs (rotated)",
+            "costume skeleton: a really turned bone keeps the costume offline");
+    }
     check(!host::cosmetics::testing::costume_skeleton_matches(vanilla, skeleton_dat(0x2 | 0x20000, 5.0f, false), &why) &&
               online_reason_short(why) == "bone 0: settings differ",
           "costume skeleton: a transform flag change names the bone");
