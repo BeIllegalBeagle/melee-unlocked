@@ -957,7 +957,9 @@ static void draw_input_overlay(int port, int row, bool lone, bool editable, bool
     auto text = [&](float x, int8_t sx, int8_t sy, ImU32 colour) {
       float fx = sx / 80.f, fy = sy / 80.f;
       const float mag = std::sqrt(fx * fx + fy * fy);
-      if (mag > 1.f) { fx /= mag; fy /= mag; }
+      // Past the rim the game pulls the stick back to length 80 and drops the fraction (HSD_PadClamp), so
+      // a full diagonal is 56, 56: 0.7000 0.7000. Without that last step it read 0.7071 (player report 11-23).
+      if (mag > 1.f) { fx = std::trunc(fx / mag * 80.f) / 80.f; fy = std::trunc(fy / mag * 80.f) / 80.f; }
       char s[32];
       std::snprintf(s, sizeof s, "%.4f %.4f", fx, fy);
       dl->AddText(ImGui::GetFont(), ImGui::GetFontSize() * k, P(x, 134), colour, s);
@@ -9868,7 +9870,9 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
           bool in_pick = pack.random;
           const std::string label = pack.name + ": " + std::to_string(pack.skins) +
               (pack.skins == 1 ? " stage skin" : " stage skins") + " for " + std::to_string(pack.stages) +
-              (pack.stages == 1 ? " stage" : " stages") + ", in the random pick";
+              (pack.stages == 1 ? " stage" : " stages") +
+              // What the box does now, not what ticking it would do: an unticked pack said "in the random pick" (11-23).
+              (in_pick ? ", in the random pick" : ", left out of the random pick");
           if (settings_checkbox(label.c_str(), &in_pick)) {
             std::string error;
             mod_message = host::cosmetics::set_stage_pack_random(pack.key, in_pick, &error) ?
@@ -11864,7 +11868,7 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
               char label[96];
               if (r == wait_role) std::snprintf(label, sizeof label, "%s##axisrole%d", role_asks[r], r);
               else std::snprintf(label, sizeof label, "%s: %s##axisrole%d", role_names[r],
-                                 axis == host::kHidAxisAuto ? "Automatic" : host::hidpad_axis_name(axis), r);
+                                 axis == host::kHidAxisAuto ? "Automatic" : host::hidpad_axis_name(tab_index, axis), r);
               if (r % 2) ImGui::SameLine();
               if (settings_widgets::Button(label)) {
                 if (r == wait_role) wait_role = -1;

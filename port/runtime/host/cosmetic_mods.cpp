@@ -1550,19 +1550,47 @@ constexpr uint32_t kVisualFlags = 0x1u | 0x2u | 0x4u | 0x8u | 0x10u | 0x20u | 0x
 // are compared as numbers with a small tolerance; a real change of a joint is far larger.
 // Returns which parts of the rest pose differ (0 when none do), so the reason can say what changed.
 constexpr uint32_t kRestRotated = 1, kRestResized = 2, kRestMoved = 4;
+// The game builds a joint's rotation from its three angles as Rz * Ry * Rx (HSD_MtxSRT). One
+// rotation has more than one set of angles: (x+pi, pi-y, z+pi) and +-pi are the same turn, and model
+// tools pick either when they export. Comparing the angles called such a skin "rotated" (a Falco
+// skin, 11-23); the rotation matrices are what the bones get, so those are compared.
+inline void rest_rotation(float x, float y, float z, double m[9]) {
+  const double cx = std::cos(x), sx = std::sin(x), cy = std::cos(y), sy = std::sin(y), cz = std::cos(z), sz = std::sin(z);
+  m[0] = cy * cz; m[1] = cz * sx * sy - cx * sz; m[2] = cx * cz * sy + sx * sz;
+  m[3] = cy * sz; m[4] = cx * cz + sx * sy * sz; m[5] = cx * sy * sz - cz * sx;
+  m[6] = -sy;     m[7] = cy * sx;                m[8] = cx * cy;
+}
 inline uint32_t rest_pose_difference(const uint8_t* p, const uint8_t* q) {
   uint32_t differs = 0;
-  for (int i = 0; i < 9; ++i) {
+  {
+    float a[3], b[3];
+    bool finite = true, same = true;
+    for (int i = 0; i < 3; ++i) {
+      uint32_t ua = be32(p + i * 4), ub = be32(q + i * 4);
+      std::memcpy(&a[i], &ua, 4); std::memcpy(&b[i], &ub, 4);
+      finite = finite && std::isfinite(a[i]) && std::isfinite(b[i]);
+      same = same && ua == ub;
+    }
+    if (!same) {
+      if (!finite) differs |= kRestRotated;
+      else {
+        double ma[9], mb[9];
+        rest_rotation(a[0], a[1], a[2], ma);
+        rest_rotation(b[0], b[1], b[2], mb);
+        // The first three values are the rest rotation, which a fighter's animations replace on every
+        // frame, so an exporter's rounding there gets more room than in scale and translation.
+        for (int i = 0; i < 9; ++i) if (std::fabs(ma[i] - mb[i]) > 1e-2) { differs |= kRestRotated; break; }
+      }
+    }
+  }
+  for (int i = 3; i < 9; ++i) {
     uint32_t ua = be32(p + i * 4), ub = be32(q + i * 4);
     float fa, fb; std::memcpy(&fa, &ua, 4); std::memcpy(&fb, &ub, 4);
     if (ua == ub) continue;
     const uint32_t part = i < 3 ? kRestRotated : i < 6 ? kRestResized : kRestMoved;
     if (!std::isfinite(fa) || !std::isfinite(fb)) { differs |= part; continue; }
     const float scale = std::max(1.0f, std::max(std::fabs(fa), std::fabs(fb)));
-    // The first three values are the rest rotation, which a fighter's animations replace on every
-    // frame, so an exporter's rounding there gets more room than in scale and translation.
-    const float tolerance = i < 3 ? 1e-2f : 1e-3f;
-    if (std::fabs(fa - fb) > tolerance * scale) differs |= part;
+    if (std::fabs(fa - fb) > 1e-3f * scale) differs |= part;
   }
   return differs;
 }
@@ -6731,6 +6759,14 @@ RepublishResult republish_stage(uint8_t* fst, uint32_t fst_size, const std::stri
   publish_locked(fst, fst_size, &target, &result);
   if (!result.ok) host::log("cosmetics: %s was not published again (%s)", target.c_str(), result.message.c_str());
   return result;
+}
+
+bool file_textures_only(const std::vector<uint8_t>& clean, const std::vector<uint8_t>& candidate, std::string* detail) {
+  std::string local;
+  if (!detail) detail = &local;
+  if (!visual_dat_only(clean, candidate, detail)) return false;
+  *detail = "textures only";
+  return true;
 }
 
 bool stage_gameplay_matches(const std::vector<uint8_t>& clean, const std::vector<uint8_t>& candidate,
