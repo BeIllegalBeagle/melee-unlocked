@@ -5,7 +5,7 @@
 #   sdl2/        SDL 2.32.10, universal dylib (bundled into the app)
 #   tools/bin/   glslangValidator 15.0.0 and spirv-cross (vulkan-sdk-1.3.296.0), universal (bundled)
 #   cross/       GCC 15.2 targeting x86-64 and AArch64 Linux (messense), for melee_game.so
-#   libusb/      libusb 1.0.30, static x86-64, for the GameCube adapter
+#   libusb/      libusb 1.0.30, static and universal, for the GameCube adapter
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 DEPS="$(cd .. && pwd)/deps"
@@ -56,20 +56,26 @@ for target in x86_64 aarch64; do
   fi
 done
 
-if [ ! -f "$DEPS/libusb/lib/libusb-1.0.a" ]; then
+# Universal: the Rosetta host links the x86-64 half, the native host the arm64 one.
+if ! lipo -archs "$DEPS/libusb/lib/libusb-1.0.a" 2>/dev/null | grep -q arm64; then
   echo "== libusb"
   (cd "$SRC" &&
    curl -fsSL -o libusb-1.0.30.tar.bz2 https://github.com/libusb/libusb/releases/download/v1.0.30/libusb-1.0.30.tar.bz2 &&
    echo "fea36f34f9156400209595e300840767ab1a385ede1dc7ee893015aea9c6dbaf  libusb-1.0.30.tar.bz2" | shasum -a 256 -c - &&
-   tar xjf libusb-1.0.30.tar.bz2)
-  # The host is x86-64 (Rosetta) and targets macOS 15: pipe2 is in the macOS 27 SDK but not on 15.
-  (cd "$SRC/libusb-1.0.30" &&
-   ./configure -q --host=x86_64-apple-darwin --disable-shared --enable-static ac_cv_func_pipe2=no \
-     CC="/usr/bin/clang -arch x86_64 -mmacosx-version-min=15.0" CFLAGS="-O2 -g" &&
-   make -j 8 >/dev/null)
+   rm -rf libusb-1.0.30 && tar xjf libusb-1.0.30.tar.bz2)
+  for arch in x86_64 arm64; do
+    host=$arch; [ $arch = arm64 ] && host=aarch64
+    rm -rf "$SRC/libusb-$arch" && cp -R "$SRC/libusb-1.0.30" "$SRC/libusb-$arch"
+    # The hosts target macOS 15: pipe2 is in the macOS 27 SDK but not on 15.
+    (cd "$SRC/libusb-$arch" &&
+     ./configure -q --host=$host-apple-darwin --disable-shared --enable-static ac_cv_func_pipe2=no \
+       CC="/usr/bin/clang -arch $arch -mmacosx-version-min=15.0" CFLAGS="-O2 -g" &&
+     make -j 8 >/dev/null)
+  done
   # Copied by hand: libtool's install fails on a path with a space in it.
   mkdir -p "$DEPS/libusb/lib" "$DEPS/libusb/include/libusb-1.0"
-  cp "$SRC/libusb-1.0.30/libusb/.libs/libusb-1.0.a" "$DEPS/libusb/lib/"
+  lipo -create "$SRC/libusb-x86_64/libusb/.libs/libusb-1.0.a" "$SRC/libusb-arm64/libusb/.libs/libusb-1.0.a" \
+       -output "$DEPS/libusb/lib/libusb-1.0.a"
   cp "$SRC/libusb-1.0.30/libusb/libusb.h" "$DEPS/libusb/include/libusb-1.0/"
   cp "$SRC/libusb-1.0.30/COPYING" "$DEPS/libusb/COPYING"
 fi
