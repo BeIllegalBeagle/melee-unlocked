@@ -2329,6 +2329,7 @@ void load_pc_settings(RenderOptions& options, int& volume) {
   options.hide_hud_emblems = false;
   options.community_codes = 0;
   options.pro_ai_stronger = 0;   // a file without the key: ask
+  options.pro_ai_extra_delay = 0;
   options.unlock_all = true;   // a file without the key: on
   options.results_screen = true;
   options.training_hud = true;
@@ -2614,6 +2615,7 @@ void load_pc_settings(RenderOptions& options, int& volume) {
       else if (key == "hide_ko_explosions") options.hide_ko_explosions = value == "1";
       else if (key == "hide_hud_emblems") options.hide_hud_emblems = value == "1";
       else if (key == "proaistronger") options.pro_ai_stronger = std::clamp(std::atoi(value.c_str()), 0, 2);
+      else if (key == "proaireaction") options.pro_ai_extra_delay = std::clamp(std::atoi(value.c_str()), 0, phillip_ai::kMaxExtraDelay);
       else if (key == "community_codes") options.community_codes = (uint32_t)std::strtoul(value.c_str(), nullptr, 16) & (MU_DISPLAY_OPTION_CODES_ALL | MU_DISPLAY_OPTION_OFFLINE_CODES);
       else if (key == "unlock_all") options.unlock_all = value != "0";
       else if (key == "zelda_as_sheik") options.zelda_as_sheik = value == "1";
@@ -2907,6 +2909,7 @@ void load_pc_settings(RenderOptions& options, int& volume) {
   host::g_hide_hud_emblems.store(options.hide_hud_emblems, std::memory_order_relaxed);
   host::g_community_codes.store(options.community_codes, std::memory_order_relaxed);
   phillip_ai::set_stronger_choice(options.pro_ai_stronger);
+  phillip_ai::set_extra_delay(options.pro_ai_extra_delay);
   RenderOptions::live_unlock_all() = options.unlock_all;
   RenderOptions::live_zelda_as_sheik() = options.zelda_as_sheik;
   RenderOptions::live_results_screen() = options.results_screen;
@@ -4125,7 +4128,7 @@ static void apply_practice_tools(RenderOptions& options) {
 static bool draw_practice_cpu_tabs(RenderOptions& options, int tab) {
   using namespace practice_ui;
   MuPcConfig c = practice_cpu::config();
-  bool changed = false;
+  bool changed = false, pro_changed = false;
   switch (tab) {
   case 1: {
     bool on = c.enabled != 0;
@@ -4150,7 +4153,18 @@ static bool draw_practice_cpu_tabs(RenderOptions& options, int tab) {
     heading("Style");
     changed |= percent_row("Aggression", &c.aggression, "How often it attacks (rather than moves) when you are in range.");
     changed |= number_row("Attack range", &c.attack_range, 10, 80, "%d units", "How close you must be before it attacks.");
-    changed |= number_row("Reaction time", &c.reaction_frames, 0, 40, "%d frames", "Frames before it answers an attack. People react in 15 to 25.");
+    if (practice_menu::pro_active(c)) {
+      // A pro in use: its reaction, not the practice CPU's, so changing it keeps the pro (Wens, 11-23).
+      uint8_t extra = (uint8_t)options.pro_ai_extra_delay;
+      if (number_row("Pro reaction", &extra, 0, phillip_ai::kMaxExtraDelay, "+%d frames",
+                     "Frames added to the pro's own reaction (18 for most). 0 plays as it was trained; more reacts later.")) {
+        options.pro_ai_extra_delay = extra;
+        phillip_ai::set_extra_delay(extra);
+        pro_changed = true;
+      }
+    } else {
+      changed |= number_row("Reaction time", &c.reaction_frames, 0, 40, "%d frames", "Frames before it answers an attack. People react in 15 to 25.");
+    }
     changed |= number_row("CPU delay", &c.act_delay, 0, 30, "%d frames", "Frames it waits before it acts out of shield, getting up and leaving hitstun.");
     {
       static const char* const respawn[MU_PC_RESPAWN_COUNT] = {"Wait", "Get off at once", "Mix"};
@@ -4350,7 +4364,7 @@ static bool draw_practice_cpu_tabs(RenderOptions& options, int tab) {
     practice_cpu::set_config(c);
     apply_practice_tools(options);
   }
-  return changed;
+  return changed || pro_changed;
 }
 
 // An arena room's match window (host::options.spectate) picks how it shows the match: STANDARD,
@@ -4801,6 +4815,7 @@ static void draw_native_practice(SettingsState& state, RenderOptions& options,
     }
     if (r.changed) { state.dirty = true; apply_practice_tools(options); }
     if (r.stronger_changed) { options.pro_ai_stronger = phillip_ai::stronger_choice(); state.dirty = true; }
+    if (r.pro_reaction_changed) { options.pro_ai_extra_delay = phillip_ai::extra_delay(); state.dirty = true; }
     const auto close_menu = [&state]() { state.practice_open = false; state.practice_release_capture = true; };
     if (r.start_unranked && practice.can_start) { slippi::native_practice::submit_start_unranked(); close_menu(); }
     if (r.start_direct || r.start_teams) {
@@ -5318,6 +5333,7 @@ static bool write_settings_file_impl(const SettingsState& state, const RenderOpt
        << "\nhide_hud_emblems " << (options.hide_hud_emblems ? 1 : 0)
        << "\ncommunity_codes " << std::hex << options.community_codes << std::dec
        << "\nproaistronger " << options.pro_ai_stronger
+       << "\nproaireaction " << options.pro_ai_extra_delay
        << "\nunlock_all " << (options.unlock_all ? 1 : 0)
        << "\nzelda_as_sheik " << (options.zelda_as_sheik ? 1 : 0)
        << "\nresults_screen " << (options.results_screen ? 1 : 0)
