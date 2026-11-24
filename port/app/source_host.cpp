@@ -6373,13 +6373,12 @@ int run(void (*shutdown)(int)) {
   if (yougame::mode_policy::mod_sources(yougame::active()).folders)
     if (const char* dll = std::getenv("MELEE_GAME_DLL")) g_dll = dll;
 #ifndef MELEE_NO_SLIPPI
-  // With the spectator server on, offline matches are recorded too, for the broadcast only (no .slp
-  // unless --record-native asked for one): Slippi Dolphin sends every game it records, offline ones
-  // included. Set before the game library loads, so its C runtime sees it.
-  if (!std::getenv("MELEE_SOURCE_RECORD") &&
-      yougame::mode_policy::spectator_allowed(yougame::active(), gx::RenderOptions::live_slippi_spectator())) {
-    _putenv_s("MELEE_SOURCE_RECORD", "2");
-    SetEnvironmentVariableA("MELEE_SOURCE_RECORD", "2");
+  // Offline VS matches are recorded and saved as .slp like online ones, as Slippi Dolphin saves every game it
+  // records (carboncitylights 11-24: "replays from vs mode aren't appearing in the replays list"); the
+  // spectator server broadcasts them as before. Set before the game library loads, so its C runtime sees it.
+  if (!std::getenv("MELEE_SOURCE_RECORD")) {
+    _putenv_s("MELEE_SOURCE_RECORD", "1");
+    SetEnvironmentVariableA("MELEE_SOURCE_RECORD", "1");
   }
 #endif
   ghost_ai::enable();   // the pro AI needs the game library's fighters: Source Port only
