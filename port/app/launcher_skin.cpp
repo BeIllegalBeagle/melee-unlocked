@@ -255,7 +255,7 @@ void sidebar(HDC dc, const launcher::yglobby::Data& d, int H, double sw = 216) {
     avatar(dc, d.me.main, 22, my + 10.2, 30, d.me.avatar); hit(R(22, my + 10.2, 30, 30), A_MY_MAIN);
     mt(dc, d.me.name, 61, d.me.code.empty() ? my + (50.5 - 20 * 0.78) / 2 : my + 10.9, 20, RGB(255, 255, 255), 96 + o);
     tx(dc, d.me.code, 61, my + 26.5, g_f12, P.dim, 96 + o);
-    launcher::yglobby::draw_badge(dc, d.me.rating, X(163 + o), X(my + 10.2), X(30));
+    launcher::yglobby::draw_tier_badge(dc, launcher::yglobby::my_tier(d), X(163 + o), X(my + 10.2), X(30));
   } else {   // signed out: sign in by code (the code shows here while YouGame waits for it)
     std::wstring text; const auto cs = launcher::yglobby::code_sign_in(&text);
     icon(dc, I_PEOPLE, 22, my + 12, 26, P.dim);
@@ -339,11 +339,12 @@ void play_page(HDC dc, const launcher::yglobby::Data& d, double bottom) {
     if (d.known) { icon(dc, i == 2 ? I_FRIEND : I_PEOPLE, 468, y + 8.5, 15, P.text2); tx(dc, std::to_wstring(d.waiting[i]) + L" in queue", 488, y + 7.5, g_f13, P.text2); }
   }
   {
-    const int t = d.me_known ? launcher::yglobby::tier_of_rating(d.me.rating) : -1;
+    const int t = d.me_known ? launcher::yglobby::my_tier(d) : -1;
     std::wstring l1, l3; COLORREF c1 = P.text2; bool big = false;
     if (!d.me_known) { l1 = L"Not signed in"; l3 = L"Sign in on YouGame to see your rank"; }
     else if (t >= 0) {
-      l1 = kTierName[t]; c1 = kTier[t]; big = true;
+      // YouGame's own label with its division ("Silver II") when it names this tier, as the YouGame page shows it.
+      l1 = d.me_label.rfind(kTierName[t], 0) == 0 ? d.me_label : std::wstring(kTierName[t]); c1 = kTier[t]; big = true;
       if (d.me_matches >= 0) l3 = std::to_wstring(d.me_matches) + L" ranked " + (d.me_matches == 1 ? L"match" : L"matches");
       if (d.me_wins >= 0 && d.me_losses >= 0) l3 = std::to_wstring(d.me_matches) + L" ranked sets" + kDot + std::to_wstring(d.me_wins) + L"W-" + std::to_wstring(d.me_losses) + L"L";
     } else { l1 = L"Unranked"; l3 = d.me_label.empty() ? L"Play ranked to place" : d.me_label; }
@@ -351,7 +352,7 @@ void play_page(HDC dc, const launcher::yglobby::Data& d, double bottom) {
     const double tw = std::max({140.0, text_w(dc, g_f15, l1) * 96.0 / dpi(), text_w(dc, g_f12, l3) * 96.0 / dpi()});
     const double h = big ? (spark ? 101.5 : 72) : 40, top = 80 + (130 - std::max(76.0, h)) / 2 + std::max(0.0, (76 - h) / 2);
     const double bx = 944 - tw - 16 - 76, by = 80 + (130 - 76) / 2.0;
-    launcher::yglobby::draw_badge(dc, d.me_known ? d.me.rating : -1, X(bx), X(by), X(76));
+    launcher::yglobby::draw_tier_badge(dc, t, X(bx), X(by), X(76));
     const double x = bx + 92;
     tx(dc, l1, x, top, g_f15, c1);
     if (big) { tx(dc, std::to_wstring(d.me.rating), x, top + 17, g_f30, P.text); if (!l3.empty()) tx(dc, l3, x, top + 54.5, g_f12, P.dim, tw); }

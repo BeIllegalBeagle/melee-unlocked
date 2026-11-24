@@ -342,6 +342,12 @@ bool parse_rank(const json& r, Data& d) {
   d.me.rating = placed && rating >= 0 ? (int)(rating + 0.5) : -1;
   d.me_matches = rank.count("matches") && rank["matches"].is_number() ? (int)rank["matches"].get<double>() : -1;
   d.me_label = wide(rank.value("label", std::string()));
+  {   // YouGame names the tier ("silver"): use it, never a guess from the rating (Seimy 11-24: 1015 is Silver II, not Bronze).
+    static const char* kTiers[6] = {"bronze", "silver", "gold", "platinum", "diamond", "challenger"};
+    const std::string tier = rank.count("tier") && rank["tier"].is_string() ? rank["tier"].get<std::string>() : std::string();
+    d.me_tier = -1;
+    for (int i = 0; i < 6 && placed; ++i) if (tier == kTiers[i]) d.me_tier = i;
+  }
   if (r.count("wins") && r["wins"].is_number() && d.me_matches >= 0) { d.me_wins = (int)r["wins"].get<double>(); d.me_losses = std::max(0, d.me_matches - d.me_wins); }
   if (d.me.rating >= 0) record_rating(d.me.rating);
   d.me_history = rating_history();
@@ -733,7 +739,10 @@ const COLORREF C_BG_TOP = RGB(0x17, 0x1F, 0x30), C_BG_BOT = RGB(0x11, 0x18, 0x25
 const COLORREF kTierColor[6] = {RGB(0xD9, 0x90, 0x63), RGB(0xC9, 0xD2, 0xDC), RGB(0xF0, 0xC2, 0x4A),
                                 RGB(0x5F, 0xD8, 0xC8), RGB(0x77, 0xBA, 0xF2), RGB(0xFF, 0xC8, 0x57)};
 const wchar_t* kTierName[6] = {L"Bronze", L"Silver", L"Gold", L"Platinum", L"Diamond", L"Challenger"};
-int tier_of(int rating) { return rating < 0 ? -1 : rating >= 1700 ? 3 : rating >= 1500 ? 2 : rating >= 1300 ? 1 : 0; }
+// YouGame's tiers by rating (sdk.md: Bronze under 900, Silver 900+, Gold 1100+, Platinum 1300+, Diamond 1500+;
+// Challenger is a Diamond in the game's top 100, which a rating alone cannot tell). For players YouGame sends only a rating for.
+int tier_of(int rating) { return rating < 0 ? -1 : rating >= 1500 ? 4 : rating >= 1300 ? 3 : rating >= 1100 ? 2 : rating >= 900 ? 1 : 0; }
+int my_tier_of(const Data& d) { return d.me_tier >= 0 ? d.me_tier : tier_of(d.me.rating); }
 
 struct Fonts { HFONT title, body, bold, sm, tiny, icon, icon_small, btn, name; int dpi = 0; } g_f;
 HFONT make_font(int px, int weight, const wchar_t* face = L"Segoe UI") {
@@ -877,7 +886,7 @@ void header(HDC dc, const Data& d, int W) {
   int right = W - S(22);
   if (d.me_known) {   // you, top right: character, name and code, badge
     const int bw = S(30), nw = std::min(S(150), std::max(width_of(dc, g_f.bold, d.me.name), width_of(dc, g_f.sm, d.me.code)));
-    badge(dc, tier_of(d.me.rating), right - bw, S(23), 30); right -= bw + S(8);
+    badge(dc, my_tier_of(d), right - bw, S(23), 30); right -= bw + S(8);
     text(dc, d.me.name, rc(right - nw, d.me.code.empty() ? S(29) : S(21), nw, S(18)), g_f.bold, RGB(255, 255, 255));
     text(dc, d.me.code, rc(right - nw, S(38), nw, S(14)), g_f.sm, C_DIM); right -= nw + S(6);
     stock(dc, d.me.main, right - S(22), S(27), 22); hit(rc(right - S(24), S(25), S(26), S(26)), A_MY_MAIN); right -= S(22) + S(12);
@@ -1326,6 +1335,8 @@ void draw_stock(HDC dc, int main, int x, int y, int px) {
   if (HICON i = stock_icon(main, px)) DrawIconEx(dc, x, y, i, px, px, 0, nullptr, DI_NORMAL);
 }
 int tier_of_rating(int rating) { return tier_of(rating); }
+int my_tier(const Data& d) { return my_tier_of(d); }
+void draw_tier_badge(HDC dc, int tier, int x, int y, int px) { g_exact_px = true; badge(dc, tier, x, y, px); g_exact_px = false; }
 int source_state() { return lobby_state(); }
 void attach_view(HWND view) { g_view_for_worker.store(view); g_reopened.store(true); { std::lock_guard<std::mutex> lock(g_live_mx); g_live_state.rank_known = false; } }
 std::wstring room_code(const std::wstring& typed) {
