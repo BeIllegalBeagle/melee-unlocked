@@ -6429,7 +6429,16 @@ int run(void (*shutdown)(int)) {
   std::string map_error;
   HMODULE module = sandboxed ? map_game_image(g_dll, &map_error) : LoadLibraryA(g_dll.c_str());
   if (!module && sandboxed) host::die("cannot map %s: %s", g_dll.c_str(), map_error.c_str());
-  if (!module) host::die("cannot load %s (error %lu)", g_dll.c_str(), GetLastError());
+  if (!module) {
+    const DWORD error = GetLastError();
+    // 4551 (ERROR_SYSTEM_INTEGRITY_POLICY_VIOLATION): Windows' app control (Smart App Control on Windows 11)
+    // refused the game library itself (two 1.0.22 reports, 11-24). Say what it is and where it is decided.
+    if (error == 4551)
+      host::die("Windows blocked %s (Smart App Control or an app control policy, error 4551), so the game cannot "
+                "start. Windows Security > App & browser control > Smart App Control decides this; on a managed "
+                "PC your administrator does.", g_dll.c_str());
+    host::die("cannot load %s (error %lu)", g_dll.c_str(), error);
+  }
   if (sandboxed) host::log("source port: %s mapped at its base by the host (sandboxed)", g_dll.c_str());
   // Windows can put the library somewhere else although its range is free: Exploit protection's
   // "Force randomization for images" (Mandatory ASLR) relocates every image, and it landed at a new
