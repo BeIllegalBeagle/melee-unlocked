@@ -761,9 +761,10 @@ void RemixBridge::frame(const Frame& f, int camera, const float vw[12], const st
         mi.emissiveColorConstant = {1.0f, 1.0f, 1.0f};
         mi.filterMode = (uint8_t)((t.mode0 >> 4) & 1);   // the game's magnification filter (0 nearest: pixel-art stages)
         const uint32_t wrap_s = t.mode0 & 3, wrap_t = (t.mode0 >> 2) & 3;
-        // Remix numbers address modes as D3D9 does (remix.h: 1 repeat, 2 mirror, 3 clamp). GX: 0 clamp,
-        // 1 repeat, 2 mirror. (Vulkan's numbering mirrored every clamped texture: Dream Land's logs striped.)
-        static const uint8_t clamp_id = [] { const char* v = std::getenv("MELEE_REMIX_CLAMP_ID"); return (uint8_t)(v ? std::atoi(v) : 3); }();
+        // Remix 1.6.1 hands address modes to Vulkan's sampler as they are: 2 clamps to the edge texel as GX
+        // does; 3 is Vulkan's clamp to a black border (Jigglypuff's face mesh reads its eye texture far past
+        // its edge: a dark disc). GX: 0 clamp, 1 repeat, 2 mirror. MELEE_REMIX_CLAMP_ID: the old 3.
+        static const uint8_t clamp_id = [] { const char* v = std::getenv("MELEE_REMIX_CLAMP_ID"); return (uint8_t)(v ? std::atoi(v) : 2); }();
         mi.wrapModeU = (uint8_t)(wrap_s == 0 ? clamp_id : wrap_s == 2 ? 2 : 1);
         mi.wrapModeV = (uint8_t)(wrap_t == 0 ? clamp_id : wrap_t == 2 ? 2 : 1);
         remixapi_MaterialHandle h = nullptr;
@@ -885,7 +886,7 @@ void RemixBridge::frame(const Frame& f, int camera, const float vw[12], const st
     {
       const uint32_t zm = d.bp.zmode();
       const bool writes_depth = (zm & 1) && ((zm >> 4) & 1);
-      if (in_layer == 2) inst.categoryFlags |= REMIXAPI_INSTANCE_CATEGORY_BIT_SKY;   // shown by the layer; Remix's sky for reflections and light
+      if (in_layer == 2 || in_layer == 5) inst.categoryFlags |= REMIXAPI_INSTANCE_CATEGORY_BIT_SKY;   // 2 shown by the layer; 5 a far backdrop plane, unlit as drawn
       else if (blended && !additive && !writes_depth && d.owner_player >= 6) inst.categoryFlags |= REMIXAPI_INSTANCE_CATEGORY_BIT_DECAL_STATIC;
     }
     m.api.DrawInstance(&inst);
@@ -941,6 +942,22 @@ void RemixBridge::frame(const Frame& f, int camera, const float vw[12], const st
       li.pNext = &sph;
       li.radiance = {l.radiance[0] * 400.0f * scale, l.radiance[1] * 400.0f * scale, l.radiance[2] * 400.0f * scale};
     } else continue;
+    // The stage's sun and lamps light only the fighters in the game (the stage's art is painted and
+    // unlit); in Remix they light the painted art too, so a strongly coloured one (Fountain of Dreams'
+    // magenta top light) dyed the platforms. Their colour keeps this share of its saturation, at the same
+    // brightness (MELEE_REMIX_LIGHT_SAT, default 0: white light; 1 = the game's colours).
+    if (l.type != kRtxLightAmbient) {
+      static const float light_sat = [] { const char* v = std::getenv("MELEE_REMIX_LIGHT_SAT"); return v ? (float)std::atof(v) : 0.0f; }();
+      const float y = 0.2126f * li.radiance.x + 0.7152f * li.radiance.y + 0.0722f * li.radiance.z;
+      li.radiance = {y + (li.radiance.x - y) * light_sat, y + (li.radiance.y - y) * light_sat, y + (li.radiance.z - y) * light_sat};
+      li.radiance = {std::max(li.radiance.x, 0.0f), std::max(li.radiance.y, 0.0f), std::max(li.radiance.z, 0.0f)};
+    }
+    {
+      static const uint64_t light_log = [] { const char* v = std::getenv("MELEE_REMIX_DRAWLOG"); return v ? std::strtoull(v, nullptr, 10) : 0ull; }();
+      if (light_log && f.sequence == light_log)
+        host::log("remix light: type %d radiance %.3f %.3f %.3f dir %.2f %.2f %.2f pos %.0f %.0f %.0f radius %.1f", (int)l.type, li.radiance.x, li.radiance.y,
+                  li.radiance.z, l.direction[0], l.direction[1], l.direction[2], l.position[0], l.position[1], l.position[2], l.radius);
+    }
     remixapi_LightHandle h = nullptr;
     if (m.api.CreateLight(&li, &h) == REMIXAPI_ERROR_CODE_SUCCESS) { m.lights.push_back(h); m.api.DrawLightInstance(h); }
   }

@@ -610,7 +610,7 @@ class D3D12Backend : public Backend {
   bool remix_layer_ = false;
   bool remix_mode_ = false;
   bool remix_boot_ = false;   // RTX Remix was the choice at start (Streamline not loaded): see remix_wanted   // RTX Remix draws the matches (the Lighting setting or MELEE_REMIX=1): DLSS and our path tracer stand down
-  uint8_t remix_layer_draw(const DrawCall& dc) const;   // the Remix layer carries this draw: 1 instead of Remix's scene, 2 as well as its sky, 3 over Remix's own
+  uint8_t remix_layer_draw(const DrawCall& dc) const;   // the Remix layer carries this draw: 1 instead of Remix's scene, 2 as well as its sky, 3 over Remix's own; 4 water, 5 Remix sky only (no layer)
   uint64_t remix_log_seq_ = 0;   // the frame being submitted (test logs)
   size_t hud_first_scene_draw_ = 0;   // this frame's first 3D scene draw (earlier 2D draws are backdrops)
   // DLAA renders and outputs at the same size, so it anti-aliases the EFB in place and the ordinary
@@ -837,6 +837,7 @@ class D3D12Backend : public Backend {
   std::unordered_set<uint32_t> remix_shadow_copies_;
   // This frame's sky domes: stage draws around the camera (vertices behind it and far in front).
   std::unordered_set<const DrawCall*> remix_domes_;
+  std::unordered_set<const DrawCall*> remix_far_planes_;
   bool scene_copy(uint32_t addr) const { return efb_copies_.count(addr) && !remix_shadow_copies_.count(addr); }
   uint64_t ps_cache_sequence_ = ~0ull;
   int ps_cache_scale_ = 0;
@@ -2789,7 +2790,7 @@ ID3D12PipelineState* D3D12Backend::get_pso(const DrawCall& dc, D3D12_PRIMITIVE_T
   const bool remix_layer = remix_layer_ && !gbuffer && mvec_out();
   if (remix_layer) psu.motion_vectors |= 4u;
   const uint8_t remix_ld = remix_layer ? remix_layer_draw(dc) : 0;
-  const uint32_t remix_bits = remix_layer ? 16u | (remix_ld && remix_ld != 4 ? 32u : 0u) : 0u;
+  const uint32_t remix_bits = remix_layer ? 16u | (remix_ld && remix_ld != 4 && remix_ld != 5 ? 32u : 0u) : 0u;
   {
     static const uint64_t fx_log = [] { const char* v = std::getenv("MELEE_REMIX_FXLOG"); return v ? std::strtoull(v, nullptr, 10) : 0ull; }();
     if (fx_log && remix_effect_draw(dc) && remix_log_seq_ == fx_log)
@@ -3018,6 +3019,7 @@ void D3D12Backend::draw_under_hand(const EfbCopy& screen) {
 uint8_t D3D12Backend::remix_layer_draw(const DrawCall& dc) const {
   if (!is_scene_draw(dc)) return 0;
   if (remix_domes_.count(&dc)) return 1;
+  if (remix_far_planes_.count(&dc)) return 5;
   if (remix_effect_draw(dc)) return 1;
   // A fighter mid-flash (hit, charge, invincibility): shown as the game draws it while Remix keeps
   // the fighter for its shadow and reflection.
@@ -3566,7 +3568,7 @@ void D3D12Backend::execute_draw(const Frame& frame, const DrawCall& dc, const Dr
   } else if (remix_layer_) {
     // The Remix layer's lane (flags.z, gx_shader.cpp): an effect blends into it (1) or replaces it (2).
     const uint8_t ld = remix_layer_draw(dc);
-    const int32_t lane = ld && ld != 4 ? ((dc.bp.blendmode() & 1) ? 1 : 2) : 0;
+    const int32_t lane = ld && ld != 4 && ld != 5 ? ((dc.bp.blendmode() & 1) ? 1 : 2) : 0;
     std::memcpy(ccpu + offsetof(PSConstants, flags) + 2 * sizeof(int32_t), &lane, sizeof lane);
     static const uint64_t fx_log = [] { const char* v = std::getenv("MELEE_REMIX_FXLOG"); return v ? std::strtoull(v, nullptr, 10) : 0ull; }();
     if (fx_log && frame.sequence == fx_log && remix_layer_draw(dc))
@@ -5591,6 +5593,7 @@ void D3D12Backend::submit_frame(const Frame& frame, const DrawMatrices* override
   remix_floor_tex_.clear();
   remix_shadow_copies_.clear();
   remix_domes_.clear();
+  remix_far_planes_.clear();
   if (remix_layer_) {
     // Sky domes (Final Destination's nebula: a sphere around the camera tinted by its vertex colours):
     // Remix takes no vertex colours, so it showed a dark flat purple. Painted as the game draws them
@@ -5598,7 +5601,29 @@ void D3D12Backend::submit_frame(const Frame& frame, const DrawMatrices* override
     // MELEE_REMIX_DOMES=0: to Remix as before.
     static const bool domes = [] { const char* v = std::getenv("MELEE_REMIX_DOMES"); return !v || std::atoi(v) != 0; }();
     for (const DrawCall& d : frame.draws) {
-      if (!domes || d.owner_player != 0xFF || d.skinned || d.xf_regs[0x26] != 0 || d.vertex_count < 24) continue;
+      if (!domes || d.owner_player != 0xFF || d.skinned || d.xf_regs[0x26] != 0) continue;
+      // A backdrop plane far behind the stage, near the game's far plane (Fountain of Dreams' sky: a black
+      // quad at half the far distance, untextured). Lit by Remix's violet stage lights it showed as a violet sky.
+      // Sent to Remix as sky (drawn unlit as it is), not to the layer: Dream Land's and Yoshi's Story's painted
+      // skies sit in front of theirs without writing depth and would not have emptied the layer over it.
+      {
+        float p[6];
+        std::memcpy(p, &d.xf_regs[0x20], sizeof p);
+        const float far_z = p[4] != 0.0f ? p[5] / p[4] : 0.0f;
+        bool textured = false;
+        for (const TextureRef& t : d.textures) textured = textured || t.used;
+        // Untextured only: Dream Land's painted sky is a textured far plane that Remix shows itself.
+        bool all_far = !textured && far_z > 1000.0f && d.vertex_count > 0;
+        for (uint32_t k = 0; all_far && k < d.vertex_count && d.first_vertex + k < frame.vertices.size(); ++k) {
+          const Vertex& v = frame.vertices[d.first_vertex + k];
+          const int row = (int)(v.posmtx & 0x3F);
+          if (row + 2 >= 64) { all_far = false; break; }
+          const float* pm = &d.posMatrices[(row + 2) * 4];
+          all_far = pm[0] * v.pos[0] + pm[1] * v.pos[1] + pm[2] * v.pos[2] + pm[3] < -0.4f * far_z;
+        }
+        if (all_far) { remix_far_planes_.insert(&d); continue; }
+      }
+      if (d.vertex_count < 24) continue;
       bool behind = false, far_ahead = false;
       for (uint32_t k = 0; k < d.vertex_count && d.first_vertex + k < frame.vertices.size() && !(behind && far_ahead); ++k) {
         const Vertex& v = frame.vertices[d.first_vertex + k];
