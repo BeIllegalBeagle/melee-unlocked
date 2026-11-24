@@ -54,6 +54,7 @@
 #include "net_trace.h"
 #include "netplay_state.h"
 #include "early_input.h"
+#include "late_read.h"
 #include "render_options.h"
 #include <algorithm>
 #include <cmath>
@@ -428,6 +429,7 @@ static void stop_early_inputs() {
 }
 static int g_match_delay = 0;
 bool g_in_online_match = false;
+namespace late_read { static void end(); }   // the late controller read (below): a game or its session is over
 // Warm-up room (warmup_park): the pair stays connected while the player is in Training.
 bool g_warmup_parked = false;
 // A kept search (native_practice.cpp, play while searching): the player chose to leave the search screen
@@ -671,6 +673,7 @@ void cleanup_connection(yougame::Leave why = yougame::Leave::Lost) {
   g_setup_hash = {};
   g_play_session_active = false;
   g_in_online_match = false;
+  late_read::end();
 #if MU_SQUAD
   g_squad_costume_match = false;   // the connection is gone: no squad match is set up
   g_squad_match_standards.clear();
@@ -833,7 +836,7 @@ bool should_advance_online_frame(int32_t frame) {
 // game asks for it twice while a match is set up (CMD_GET_DELAY, then the match start block), so the
 // value is latched on the first ask and held until the match ends: both asks must agree.
 static int g_latched_delay = 0;
-static int effective_delay() {
+static int chosen_delay() {
   // The Friends lobby's Start froze one input delay for every machine (yougame_lobby_setup.h).
   if (const auto lobby = yougame::friends_lobby(); lobby.open && lobby.plan && lobby.plan->ok) return lobby.plan->input_delay;
   // MELEE_TEST_AUTO_DELAY=1 (hidden runs, which read no settings file) turns auto on.
@@ -862,6 +865,110 @@ static int effective_delay() {
   g_latched_delay = std::clamp((int)std::lround(ping / 4.0 / 16.683), 2, 4);
   host::log("slippi: auto delay: %s ping %d ms, %d frames", match_ping > 0 ? "match" : "pre-match", ping, g_latched_delay);
   return g_latched_delay;
+}
+
+// ---------------------------------------------------------------- late controller read
+// host/late_read.h says what it is. Here: the game is given one frame less than the chosen delay when
+// the connection has room, and each frame of that match waits between sending its pad and reading
+// the other player's inputs. 1v1 on the Source Port only. MELEE_ONLINE_LATE_READ=0 turns it off.
+namespace late_read {
+using namespace host::late_read;
+struct Latch { const void* connection = nullptr; int base = 0; bool on = false; };
+static Latch latch;
+static const void* soured = nullptr;   // the connection a game played this way went badly on: not offered there again
+static bool engaged = false;
+static int base_delay = 0;
+static Control control;
+
+static bool enabled() {
+  static const bool on = [] { const char* v = std::getenv("MELEE_ONLINE_LATE_READ"); return !(v && *v == '0'); }();
+  return on;
+}
+// Tests: MELEE_TEST_LATE_READ=1 takes it whatever the ping, MELEE_TEST_LATE_HOLD_MS fixes the wait.
+static bool forced() {
+  static const bool on = [] { const char* v = host::test_env::getenv("MELEE_TEST_LATE_READ"); return v && *v == '1'; }();
+  return on;
+}
+static double fixed_hold() {
+  static const double ms = [] { const char* v = host::test_env::getenv("MELEE_TEST_LATE_HOLD_MS"); return v && *v ? std::atof(v) : -1.0; }();
+  return ms;
+}
+
+// The delay the game is given for a chosen delay of `chosen` frames.
+static int offer(int chosen) {
+  if (!enabled() || !host::game_image || chosen < 2 || !g_netplay) return chosen;
+  if (soured == g_netplay.get()) return chosen;
+  if (latch.connection == g_netplay.get() && latch.base == chosen) return latch.on ? chosen - 1 : chosen;
+  if (const auto lobby = yougame::friends_lobby(); lobby.open && lobby.plan && lobby.plan->ok) return chosen;   // one delay for every machine
+  if (g_netplay->GetSlippiConnectStatus() != NetplayClient::ConnectStatus::CONNECTED) return chosen;
+  if (g_netplay->RemoteMachineCount() != 1 || g_netplay->RemotePortCount() != 1 || g_netplay->SecondLocalPort() >= 0 || opponent_runahead()) return chosen;
+  const int match_ping = (int)g_netplay->LastPingMs();
+  const int prematch_ping = g_netplay->PreMatchPingMs();
+  const bool measured = match_ping > 0 || prematch_ping > 0;
+  const int ping = match_ping > 0 ? match_ping : prematch_ping > 0 ? prematch_ping : g_netplay->ConnectionPingMs();
+  bool on = forced();
+  const double work = host::recent_sim_frame_work_ms();
+  if (!on) {
+    if (ping <= 0) return chosen;   // no ping yet: the chosen delay as it is
+    on = has_room(chosen, ping, work) && host::recent_sim_frames_steady();
+    // A busy computer is not a final "no" either: the next ask looks again, the match takes one answer.
+    if (!on && has_room(chosen, ping)) {
+      static unsigned busy_logged = 0;
+      if (busy_logged++ % 300 == 0)
+        host::log("slippi: late controller read: not now, this computer's frames are %s (%.1f ms of work, ping %d ms)",
+                  host::recent_sim_frames_steady() ? "too busy for the wait" : "missing their 60 Hz place, or too few seen yet", work, ping);
+      return chosen;
+    }
+  }
+  // The connection's own estimate starts high and comes down: a "no" from it is not final, the next
+  // ask looks again (the game takes the delay once, when the match starts).
+  if (!on && !measured) return chosen;
+  latch = {g_netplay.get(), chosen, on};
+  host::log("slippi: late controller read: %s (chosen delay %d, ping %d ms)", on ? "on, the game runs one frame less and waits inside each frame" : "off, the connection has no room for it", chosen, ping);
+  return on ? chosen - 1 : chosen;
+}
+
+// Frame 1 of a game: `delay` is what the game took and `chosen` the delay chosen for it. Whenever the
+// game runs one frame less than the chosen delay it came from an answer above, whichever ask the game
+// took it from: the wait is on for that game. No game runs the lower delay without it.
+static void begin(int delay, int chosen) {
+  if (engaged && delay == base_delay - 1) return;   // frame 1 again, while the game waits for the other player
+  engaged = enabled() && host::game_image && g_netplay && chosen >= 2 && delay == chosen - 1;
+  base_delay = engaged ? chosen : 0;
+  control.reset();
+}
+static void end() {
+  if (engaged && control.frames())
+    host::log("slippi: late controller read: this game waited %.1f ms a frame on average, so presses showed %.1f ms sooner than with delay %d",
+              control.average_hold_ms(), control.saved_ms(), base_delay);
+  if (engaged && g_netplay && control.went_badly()) {
+    soured = g_netplay.get();
+    host::log("slippi: late controller read: not offered again to this opponent (%llu pads came after their frame had started, %llu of %llu frames had no room for the wait)",
+              (unsigned long long)control.late_arrivals(), (unsigned long long)control.short_frames(), (unsigned long long)control.frames());
+  }
+  engaged = false; base_delay = 0; latch = {};
+}
+
+// After this frame's pad went out, before the other player's inputs are read.
+static void hold(int32_t frame, bool advancing) {
+  if (!engaged || !g_netplay) return;
+  double early = 0.0;
+  const bool have_early = g_netplay->RemotePadEarlyMs(frame, &early);
+  const double wait = control.step(frame, have_early, early, host::last_sim_frame_work_ms(), host::last_sim_frame_late(), fixed_hold());
+  double waited = 0.0;
+  if (!advancing) waited = host::tick_hold(wait / 1000.0) * 1000.0;   // a frame run to catch up does not wait
+  control.note_waited(waited);
+  if (control.frames() % 600 == 0)
+    host::log("slippi: late controller read: wait %.1f ms now (%.1f waited this frame), %.1f on average; remote pads at least %.1f ms early without it; work %.1f ms; %.1f ms sooner than delay %d",
+              wait, waited, control.average_hold_ms(), control.least_early_ms(), control.work_ms(), control.saved_ms(), base_delay);
+}
+}  // namespace late_read
+
+// The delay the game is given: the chosen one, or one less with the late controller read. While a
+// game runs it is the delay that game took.
+static int effective_delay() {
+  if (g_in_online_match && late_read::engaged) return late_read::base_delay - 1;
+  return late_read::offer(chosen_delay());
 }
 
 void prepare_opponent_inputs(int32_t frame, bool should_skip, std::vector<uint8_t>& q) {
@@ -1046,7 +1153,9 @@ void handle_online_inputs(const uint8_t* payload, uint32_t size, std::vector<uin
     if (yougame::session()) yougame::game_started(g_game_facts.rng, g_game_facts.stage);   // the room records this game's result
 #endif
     host::log("slippi: online game starts, delay %d frames, direct peer to peer", (int)delay);
+    const int chosen_for_game = chosen_delay();
     g_latched_delay = (int)delay;   // the delay the game took: every later answer this match agrees with it
+    late_read::begin((int)delay, chosen_for_game);
     g_in_online_match = true;
     g_friends_lobby.note.clear();
     gecko_session::match_started();   // the agreed Gecko codes, decided from both locks
@@ -1104,6 +1213,7 @@ void handle_online_inputs(const uint8_t* payload, uint32_t size, std::vector<uin
         g_netplay->SecondLocalPort() >= 0 ? std::make_unique<Pad>(frame + delay, finalized, finalized_checksum, payload + 27) : nullptr);
     host::early_input::note_sent_pad(frame + delay, inputs);
     host::input_note_pad_frame(frame);
+    late_read::hold(frame, g_currently_advancing || g_frames_to_advance > 0);
   }
   prepare_opponent_inputs(frame, skip, q);
   host::early_input::note_frame_done(skip, !q.empty() && q[0] == 4, inputs);
@@ -2406,6 +2516,7 @@ void handle_report_game(const uint8_t* p) {
   }
   stop_early_inputs();
   g_latched_delay = 0;   // the next match picks its delay from its own ping
+  late_read::end();
   trace_end_match();
   // Source publishes its Game End record in h_replay_event, except a duel's TIME!, which this
   // report decides (yougame_ranked.h time_out_waits_for_report). A disconnect or desync in the

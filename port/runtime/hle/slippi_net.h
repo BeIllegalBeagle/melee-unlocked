@@ -338,6 +338,10 @@ class NetplayClient {
   PlayerSelections GetSlippiRemoteChatMessage(bool chat_enabled);
   uint8_t GetSlippiRemoteSentChatMessage(bool chat_enabled);
   int32_t CalcTimeOffsetUs();
+  // Late controller read: how many ms before now the remote pad for `frame` arrived, taken from the
+  // newest pad received and the 59.94 Hz the pads are sent at (negative: it is still on its way). The
+  // least over the remote players; false before any pad of this game has arrived.
+  bool RemotePadEarlyMs(int32_t frame, double* early_ms);
   double GetAndResetAvgPingMs();
   // Once a dropped player's last input is settled it repeats up to `frame` (Slippi 3.7.0).
   void FillDroppedPlayerInputs(int32_t frame);
@@ -349,6 +353,11 @@ class NetplayClient {
   int RemoteCount() const { return (int)remote_count_seen_.load(std::memory_order_relaxed); }
   // The median of the last pre-match pings (NP_MSG_MU_PING) to the first opponent, 0 if none yet.
   int PreMatchPingMs() const { return (int)(prematch_ping_ms_.load(std::memory_order_relaxed)); }
+  // The connection's own round trip estimate (ENet's, from its reliable packets and keep-alive pings),
+  // the longest over the opponents; 0 before there is one. It starts high and settles over the first
+  // seconds of a connection, so early on it reads longer than the truth, never shorter. It is the only
+  // ping there is before the first game against Slippi Dolphin, which answers no pre-match ping.
+  int ConnectionPingMs() const { return (int)(connection_ping_ms_.load(std::memory_order_relaxed)); }
   void SendChatMessage(int message_id);
   void SendGamePrepStep(const GamePrepStep& step);
   std::array<uint8_t, 6> FetchGamePrepStep(uint8_t index) { return game_prep_.fetch(index); }
@@ -508,11 +517,13 @@ class NetplayClient {
   std::atomic<uint32_t> remote_ping_ms_[REMOTE_PLAYER_MAX] = {};
   std::atomic<uint8_t> remote_count_seen_{0};
   std::atomic<uint32_t> prematch_ping_ms_{0};
+  std::atomic<uint32_t> connection_ping_ms_{0};
   std::deque<uint32_t> prematch_samples_;   // network thread only
   void SendPrematchPing();
   int32_t last_frame_acked_[REMOTE_PLAYER_MAX] = {};
   FrameOffsetData frame_offset_data_[REMOTE_PLAYER_MAX];
   FrameTiming last_frame_timing_[REMOTE_PLAYER_MAX];
+  FrameTiming remote_arrival_[REMOTE_PLAYER_MAX];   // timing_mutex_: the newest pad frame received and when
   std::deque<FrameTiming> ack_timers_[REMOTE_PLAYER_MAX];
   std::atomic<ConnectStatus> status_{ConnectStatus::UNSET};
   std::atomic<uint32_t> pending_disconnect_reason_{0}, disconnect_reason_{0};
