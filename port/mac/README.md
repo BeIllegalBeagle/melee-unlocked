@@ -74,7 +74,8 @@ architectures, and B is 0 on x86-64, whose code is unchanged.
   architecture in `LSArchitecturePriority`.
 
 Checked 2026-11-23 on an M5 with macOS 27, against upstream's 1.0.14 Linux
-release:
+release, and again on 2026-11-24 after merging 1.0.19 (against its release),
+with the same results:
 - The headless parity scripts (`--fast --vanilla-game --vanilla-only`) give
   identical state digests for that release's library and both Mac builds.
 - Rollback matches between the x86-64 and arm64 apps over loopback
