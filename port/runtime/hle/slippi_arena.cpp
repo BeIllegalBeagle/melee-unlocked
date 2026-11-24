@@ -2034,7 +2034,10 @@ bool css_hand(float* x, float* y) {
 }
 
 std::atomic<int> g_css_mode{-1};
-void set_css_mode(int mode) { g_css_mode.store(mode); }
+void set_css_mode(int mode) {
+  // Logged on a change only: which select the panel follows (the Friends lobby's is kCssFriendsLobby).
+  if (g_css_mode.exchange(mode) != mode) host::log("arena: the select's mode is %d%s", mode, mode == kCssFriendsLobby ? " (the Friends lobby)" : "");
+}
 bool css_friends_lobby() { return g_css_mode.load() == kCssFriendsLobby; }
 bool css_ranked_or_unranked() {
   const int mode = g_css_mode.load();
