@@ -78,6 +78,14 @@ Each build takes a few minutes clean; later runs rebuild only what changed.
   the adapter, so Slippi Dolphin must be closed.
 - `spike/shader-seed/` (the bundled shader cache) is generated locally and is not in git.
   `package_full.py` copies it into the app when it is present.
+- Opened from Finder (no arguments), the app uses the disc from `~/.local/share/melee-unlocked/last-iso`
+  or asks for one in an open panel (`port/mac/disc_choice.h`). Any argument skips this, so tests are
+  unaffected.
+  - Test a Finder start with `open -n --env HOME=... --env XDG_DATA_HOME=...` (port/mac/README.md,
+    "Opening the app from Finder"). Keep the test disc out of Downloads, Documents and Desktop: a
+    LaunchServices start reading it there waits on a macOS privacy prompt on the user's screen.
+  - Don't take window screenshots with `screencapture`: they make macOS ask the user to let the
+    terminal record the screen.
 
 ## Testing
 

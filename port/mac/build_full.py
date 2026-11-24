@@ -104,7 +104,7 @@ def main():
         'port/linux/renderer_presenter.cpp', 'port/mac/mac_gl.mm', 'port/mac/elf_loader.cpp', str(BUILD.relative_to(ROOT)/'gen/FObjHost.cpp'),
         'port/app/main.cpp', 'port/app/source_host.cpp', 'port/app/source_guest_boundary.cpp', 'port/app/source_p2p.cpp']]
     sources += sorted(Path('port/linux/full').glob('*.cpp'))
-    sources += [Path('port/mac/embed_mac.mm')]
+    sources += [Path('port/mac/embed_mac.mm'), Path('port/mac/disc_choice_mac.mm')]
     sources += sorted(Path('port/third_party/enet').glob('*.c'))
     sources += sorted(Path('port/third_party/monocypher').glob('*.c'))
     # .slpz replays (main.cpp playable_replay and the compress path): replay_slpz.cpp and zstd both ways, as
@@ -151,7 +151,7 @@ def main():
         obj = objects/(str(source).replace('/','_')+'.o')
         dep, stamp = obj.with_suffix('.d'), obj.with_suffix('.flags')
         opts = [*flags, *(['-std=c++17'] if source.suffix == '.mm' else cflags if source.suffix == '.c' else cpp)]
-        if source.name == 'embed_mac.mm':
+        if source.name in ('embed_mac.mm', 'disc_choice_mac.mm'):
             # AppKit must not see the Win32 compatibility typedefs/macros.
             opts = [*flags, '-std=c++17', '-fblocks', '-fno-objc-arc',
                     '-I'+str(SDL/'include'), '-I'+str(SDL/'include/SDL2')]

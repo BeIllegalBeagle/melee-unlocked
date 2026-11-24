@@ -116,6 +116,37 @@ The GameCube adapter (Wii U mode) is opened through libusb, as Slippi Dolphin
 does. Like Dolphin, it needs [GCAdapterDriver](https://github.com/secretkeysio/GCAdapterDriver)
 installed and enabled; close Dolphin first, since one program holds the adapter at a time.
 
+### Opening the app from Finder
+
+Finder starts the app with no arguments. The app then uses the disc chosen last
+time, or shows an open panel that takes only a Melee NTSC 1.02 disc image and
+explains what it needs when the player cancels, as a no-argument start on
+Windows does (`standalone_launch_win.h`). The choice is kept in
+`~/.local/share/melee-unlocked/last-iso`, the file `play-mac.command` also uses
+(`disc_choice.h`, `disc_choice_mac.mm`). Any argument at all skips this. The
+panel starts AppKit through SDL, as the game window does a moment later.
+
+A disc in Downloads, Documents or Desktop makes macOS ask once whether
+"MeleeUnlocked" may access that folder. A start from Terminal uses Terminal's
+access instead. The answer belongs to the app's signature: an ad hoc app asks
+again after every rebuild, and a Developer ID app keeps the answer across
+updates.
+
+To test a start from Finder without touching your own profile, use `open`
+with throwaway folders. `open` gives the app no arguments, just as Finder does:
+
+```sh
+open -n --env HOME=$T/home --env XDG_DATA_HOME=$T/data --env XDG_CONFIG_HOME=$T/config \
+  --env XDG_CACHE_HOME=$T/cache --env XDG_STATE_HOME=$T/state --env MELEE_NO_GC_ADAPTER=1 \
+  build-mac-full-arm64-squad/MeleeUnlocked.app
+```
+
+With `$T/data/melee-unlocked/last-iso` naming a disc, the game starts on it.
+Without that file, the open panel comes up in front. If the disc sits in a
+protected folder, the first start waits on the privacy prompt, so use a clone
+outside them for tests (`cp -c disc.iso $T/`). While the panel is open, SIGTERM
+is not handled (SDL turns it into a quit event), so stop the app with `kill -9`.
+
 ## Staging agent-test variant
 
 `python3 -B port/mac/build_full.py --agent-test-hook` enables the staging-only
