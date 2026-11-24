@@ -2061,6 +2061,8 @@ void tick() {
         host::test_env::getenv("MELEE_TEST_FRIENDS_LOBBY") && yougame::identity().ok) {
       test_lobby_done = true;
       host::log("friends lobby test: the 4-door lobby through the launcher's bridge");
+      yougame::set_menu_service(1);          // as the YouGame page's Friends row picks it
+      yougame::set_launcher_session(true);
       yougame::friends::events.online_menu(false);
       slippi::online::native_cleanup_match();
       g_lifecycle = Lifecycle{};
