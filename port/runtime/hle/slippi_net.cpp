@@ -1026,6 +1026,7 @@ void NetplayClient::OnData(Packet& packet, ENetPeer* peer) {
         remote_build_[pidx].warmup = warmup;
         remote_build_[pidx].pause_rule = has_caps3 && (caps3 & MU_BUILD_CAPS3_PAUSE_RULE) != 0;
         remote_build_[pidx].no_pause = remote_build_[pidx].pause_rule && (caps3 & MU_BUILD_CAPS3_NO_PAUSE) != 0;
+        remote_build_[pidx].arena_ffa = has_caps3 && (caps3 & MU_BUILD_CAPS3_ARENA_FFA) != 0;
         remote_build_[pidx].port_colour[0] = has_colours && colour1 >= 1 && colour1 <= 4 ? (int8_t)(colour1 - 1) : (int8_t)-1;
         remote_build_[pidx].port_colour[1] = has_colours && colour2 >= 1 && colour2 <= 4 ? (int8_t)(colour2 - 1) : (int8_t)-1;
         if (warmup && remote_warmup_[pidx].load(std::memory_order_relaxed) < 0) remote_warmup_[pidx].store(0, std::memory_order_relaxed);
@@ -1282,7 +1283,8 @@ void NetplayClient::SendBuild() {
   const bool no_pause = !online::config().direct_pause;
   sent_no_pause_.store(no_pause);
   const uint8_t caps3 = (uint8_t)((squad_cap ? 0x01 : 0) | (squad_friend_cap ? 0x02 : 0) | 0x04 | (setup_hash_on ? 0x08 : 0) |
-                                  MU_BUILD_CAPS3_WARMUP | MU_BUILD_CAPS3_PAUSE_RULE | (no_pause ? MU_BUILD_CAPS3_NO_PAUSE : 0));
+                                  MU_BUILD_CAPS3_WARMUP | MU_BUILD_CAPS3_PAUSE_RULE | (no_pause ? MU_BUILD_CAPS3_NO_PAUSE : 0) |
+                                  MU_BUILD_CAPS3_ARENA_FFA);
   // A YouGame match (owner 11-19): the peer may be one of YouGame's own builds, which reads the first byte
   // its own way, so there the byte keeps those meanings (Squad Strike, pick previews, setup hash, friend
   // rooms). A build with the third byte reads this build's flags from it either way.
@@ -1652,6 +1654,17 @@ void NetplayClient::Send(Packet& packet) {
 // the throttle at full, and ENet sends the setting to the peer too (Slippi 3.7.0).
 static void disable_packet_throttle_drops(ENetPeer* peer) {
   enet_peer_throttle_configure(peer, ENET_PEER_PACKET_THROTTLE_INTERVAL, ENET_PEER_PACKET_THROTTLE_ACCELERATION, 0);
+}
+
+void NetplayClient::Abandon() {
+  do_loop_.store(false);
+  if (client_) wakeup_thread(client_);
+  if (thread_.joinable()) thread_.join();
+  status_.store(ConnectStatus::DISCONNECTED, std::memory_order_release);
+  for (auto& conn : active_connections_) for (auto& peer : conn.second) enet_peer_reset(peer.first);
+  active_connections_.clear();
+  for (auto& a : player_active_) a.store(false, std::memory_order_release);
+  server_.clear();   // nothing left for the destructor's Disconnect to wait on
 }
 
 void NetplayClient::Disconnect() {
@@ -2634,13 +2647,16 @@ static json local_peer_ticket(const UserInfo& me, Matchmaking::OnlinePlayMode mo
                              : r < (int)local_peer.remotes.size() ? local_peer.remotes[r++] : std::string();
     if (local) {
       p["uid"] = me.uid; p["displayName"] = me.display_name; p["connectCode"] = me.connect_code;
+    } else if (local_peer.names.size() == local_peer.remotes.size() && local_peer.codes.size() == local_peer.remotes.size()) {
+      // An arena free-for-all of three: the real players' names and codes (the select shows them).
+      p["uid"] = "arena-" + local_peer.codes[r - 1]; p["displayName"] = local_peer.names[r - 1]; p["connectCode"] = local_peer.codes[r - 1];
     } else if (n == 2) {
       p["uid"] = "local-peer"; p["displayName"] = "Peer"; p["connectCode"] = "PEER#001";
     } else {
       p["uid"] = "local-peer-" + std::to_string(i + 1); p["displayName"] = "Peer " + std::to_string(i + 1);
       p["connectCode"] = "PEER#00" + std::to_string(i + 1);
     }
-    p["port"] = i + 1;
+    p["port"] = local_peer.ports.size() == (size_t)n ? local_peer.ports[i] + 1 : i + 1;
     p["isLocalPlayer"] = local;
     p["ipAddress"] = addr;
     p["ipAddressLan"] = addr;
@@ -2651,7 +2667,7 @@ static json local_peer_ticket(const UserInfo& me, Matchmaking::OnlinePlayMode mo
   resp["type"] = "get-ticket-resp";
   resp["matchId"] = "mode." + std::string(mode_name) + "-local-test";
   resp["players"] = players;
-  resp["isHost"] = local_peer.local_index == 0;
+  resp["isHost"] = local_peer.local_index == 0;   // the first machine decides (port 0 in a setup with Pro AIs)
   if (n == 2) resp["stages"] = {0x2, 0x3, 0x8, 0x1C, 0x1F, 0x20};
   return resp;
 }
@@ -3339,6 +3355,7 @@ bool Matchmaking::ingest_ticket(const Ticket& ticket) {
   }
   remote_ips_.swap(t.remote_ips);
   public_fallbacks_.swap(t.public_fallbacks);
+  { std::lock_guard<std::mutex> lk(result_mutex_); remote_ips_found_ = remote_ips_; }
   is_host_ = t.is_host;
   return true;
 }
@@ -3649,7 +3666,7 @@ void Matchmaking::handleConnecting() {
                                 !search_settings_.friend_room.empty()), search_settings_.squad_side,
       !search_settings_.friend_room.empty() && search_settings_.mode == DIRECT
 #endif
-      , lobby.open && lobby.plan && lobby.plan->ok ? lobby.plan.get() : nullptr);
+      , lobby.open && lobby.plan && lobby.plan->ok && !room_link_ ? lobby.plan.get() : nullptr);
   client->set_yougame_peer(display_provider_ == display::Provider::YouGame);
   bool handed_over = false;
   while (!handed_over) {

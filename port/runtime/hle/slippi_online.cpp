@@ -333,7 +333,8 @@ bool g_local_random_stage = false;
 Matchmaking::MatchSearchSettings g_last_search;
 // The next search is an arena game under YouGame (arena_start_yg_search): its fighters and the arena's
 // whole word for the match (a player id, longer than the 18 bytes a typed code gets).
-struct ArenaNext { std::vector<std::string> fighters; std::string code; } g_arena_next;
+struct ArenaNext { std::vector<std::string> fighters; std::string code; bool ffa = false; } g_arena_next;
+bool g_arena_ffa_next = false;   // the next search is an arena free-for-all (arena_start_search)
 // The 4-player Friends lobby (yougame_lobby.h) on the 4-door select: armed by the Friends row (the host
 // holds a room) or an accepted lobby invite (a guest joins its room), until the player leaves it (LEAVE).
 // One Control lasts the whole lobby, across its matches. closed: its search failed or its room closed
@@ -1342,6 +1343,8 @@ void start_find_match(const uint8_t* payload, const std::string& friend_room = {
   sj.erase(std::find(sj.begin(), sj.end(), '\0'), sj.end());
   const ArenaNext arena = std::move(g_arena_next);
   g_arena_next = ArenaNext{};
+  search.arena_ffa = g_arena_ffa_next || arena.ffa;
+  g_arena_ffa_next = false;
   if (!arena.fighters.empty()) {
     // An arena game under YouGame: the arena's room carries it. Not a code the player typed, so it
     // stays out of the recent codes, and a pending Discord join is left for the player's own Direct.
@@ -1596,6 +1599,16 @@ int build_verdict(uint8_t remote_count, std::string* why) {
   const bool lobby_match = lobby.open && lobby.plan && lobby.plan->ok;
   for (int i = 0; i < remote_count; ++i) {
     const auto rb = g_netplay->GetRemoteBuild(i);
+    if (g_last_search.arena_ffa && !rb.arena_ffa) {
+      // A free-for-all: a peer whose build has none would start a teams game (desync at best). A
+      // build message still on its way gets the usual wait.
+      const uint64_t since = g_netplay->ConnectedAtMs();
+      const uint64_t now = (uint64_t)std::chrono::duration_cast<std::chrono::milliseconds>(
+          std::chrono::steady_clock::now().time_since_epoch()).count();
+      if (!rb.received && !(since != 0 && now - since >= kBuildWaitMs)) { waiting = true; continue; }
+      *why = "A player's game can't play a free-for-all. Everyone needs the latest Melee Unlocked.";
+      return -1;
+    }
     if (lobby_match) {
       if (lobby.plan->humans != lobby.plan->machines && rb.received && !mu_local_partner_capable(rb.caps2)) {
         *why = "A player's game can't play local partners. Everyone needs the latest Melee Unlocked.";
@@ -2056,6 +2069,7 @@ void prepare_online_match_state(std::vector<uint8_t>& q) {
   std::string setup_budget;           // with them, this side's squad budget identity (setup hash only)
   std::array<int, PLAYER_COUNT_MAX> lobby_colors;   // a Doubles lobby match: each machine's colour, by port
   lobby_colors.fill(-1);
+  std::vector<PlayerSelections> code_picks;   // a code match: each port's selections as sent (people's picks)
   if (local_ready && remote_ready) {
     bool decider = g_netplay->IsDecider();
     uint8_t remote_count = bounded_remote_machine_count();
@@ -2080,6 +2094,8 @@ void prepare_online_match_state(std::vector<uint8_t>& q) {
       // including local partners; readiness above still waits for each real connection's lock-in.
       frozen_selections.resize(lobby_plan->humans);
       for (int port = 0; port < lobby_plan->humans; ++port) {
+        // A code match: a person's own pick stands (their selections); only a Pro AI seat's is the setup's.
+        if (lobby_plan->code_match && lobby_plan->port[port].pro < 0 && ordered[port]) continue;
         auto& pick = frozen_selections[port];
         pick.player_idx = uint8_t(port); pick.character_id = uint8_t(lobby_plan->port[port].pick.ch);
         pick.character_color = uint8_t(lobby_plan->port[port].pick.color);
@@ -2100,6 +2116,7 @@ void prepare_online_match_state(std::vector<uint8_t>& q) {
     }
     std::vector<PlayerSelections> sent_selections;   // as sent, before the game's overwrites (setup hash)
     for (auto* o : ordered) sent_selections.push_back(*o);
+    code_picks = sent_selections;
     for (size_t i = 0; i < g_overwrite_selections.size() && i < ordered.size(); ++i) {
       ordered[i]->character_id = g_overwrite_selections[i].character_id;
       ordered[i]->character_color = g_overwrite_selections[i].character_color;
@@ -2183,12 +2200,19 @@ void prepare_online_match_state(std::vector<uint8_t>& q) {
       }
     }
     rng_offset = decider ? lps.rng_offset : rps[0].rng_offset;
+    // An arena free-for-all: a Teams search played with teams off (every fighter their own team) on a
+    // stage from the doubles list, drawn from the seed every peer agrees on (no stage select).
+    const bool arena_ffa = g_last_search.arena_ffa;
+    if (arena_ffa) {
+      stage_id = stage_pool::agreed_stage(rng_offset, true);
+      alt_stage_mode = 0;
+    }
     uint8_t first_team = ordered[0]->team_id;
     bool all_same_team = true;
     for (auto* s : ordered) if (s->team_id != first_team) all_same_team = false;
     static const uint8_t perms[6][4] = {{0, 0, 1, 1}, {1, 1, 0, 0}, {0, 1, 1, 0}, {1, 0, 0, 1}, {0, 1, 0, 1}, {1, 0, 1, 0}};
     const uint8_t* team_assign = perms[rng_offset % 6];
-    bool teams = g_last_search.mode == Matchmaking::TEAMS;
+    bool teams = g_last_search.mode == Matchmaking::TEAMS && !arena_ffa;
     std::array<int, PLAYER_COUNT_MAX> room_teams;
     room_teams.fill(-1);
     std::array<int, 2> team_color{{0, 1}};   // Doubles: the colour each room team wears (team_colors)
@@ -2241,6 +2265,7 @@ void prepare_online_match_state(std::vector<uint8_t>& q) {
     }
 #endif
     setup_inputs = setup_inputs_hash(sent_selections, room_teams.data(), room_teams_known, setup_squad);
+    if (arena_ffa) setup_inputs = mu_fnv64_u8(setup_inputs, 0xFA);   // a peer not playing a free-for-all refuses the match
     // The block is kept between matches, and a Friends lobby setup writes bytes no other match does
     // (P1/P2 slot types, CPU kind and level, the rules bit): back to the shipped block's first. They
     // are hashed, so two machines with different pasts would otherwise refuse the match.
@@ -2289,7 +2314,8 @@ void prepare_online_match_state(std::vector<uint8_t>& q) {
     // instance test logs show the teams, characters and stage every peer agreed on.
     {
       char setup[160];
-      int len = std::snprintf(setup, sizeof setup, "teams %d stage %u rng %08X:", teams ? 1 : 0, (unsigned)stage_id, rng_offset);
+      int len = std::snprintf(setup, sizeof setup, "%steams %d stage %u rng %08X:", arena_ffa ? "free-for-all " : "", teams ? 1 : 0,
+                              (unsigned)stage_id, rng_offset);
       for (int i = 0; i < PLAYER_COUNT_MAX && len > 0 && len < (int)sizeof setup; ++i)
         if (block[0x61 + i * 0x24] == 0)
           len += std::snprintf(setup + len, sizeof setup - len, " P%d char %u color %u team %u", i + 1, block[0x60 + i * 0x24],
@@ -2333,7 +2359,19 @@ void prepare_online_match_state(std::vector<uint8_t>& q) {
     // Doubles: the room's pairs wear the colours their players chose (lobby::doubles_colors). Hashed with
     // the block: a machine that mapped other colours refuses the match, never plays a different one.
     const auto team_colors = yougame::lobby::doubles_colors(*lobby_plan, lobby_colors);
-    yougame::lobby::apply(*lobby_plan, block.data(), block.size(), timer, g_lobby_costumes.data(), &team_colors);
+    if (lobby_plan->code_match) {
+      // A code match: each person's own pick from the select (sent_selections, by port); the Pro AI seats
+      // keep the setup's. Hashed with the block, so a machine with other picks refuses the match.
+      yougame::lobby::Plan picked = *lobby_plan;
+      for (int port = 0; port < picked.humans && port < (int)code_picks.size(); ++port) {
+        if (picked.port[port].pro >= 0) continue;
+        picked.port[port].pick.ch = code_picks[port].character_id;
+        picked.port[port].pick.color = code_picks[port].character_color;
+      }
+      yougame::lobby::apply(picked, block.data(), block.size(), timer, g_lobby_costumes.data(), &team_colors);
+    } else {
+      yougame::lobby::apply(*lobby_plan, block.data(), block.size(), timer, g_lobby_costumes.data(), &team_colors);
+    }
     rng_offset = lobby_plan->seed;
     alt_stage_mode = 0;
     setup_inputs = yougame::lobby::inputs_hash(*lobby_plan);
@@ -3046,8 +3084,10 @@ ArenaMatchStatus arena_match_status() {
 }
 
 bool arena_start_search(int mode, const std::string& code, bool locked, uint8_t character, uint8_t color,
-                        uint8_t team, std::string* error) {
+                        uint8_t team, bool ffa, std::string* error) {
+  host::log("slippi: arena search: mode %d, code %s, locked %d, ffa %d", mode, code.c_str(), locked ? 1 : 0, ffa ? 1 : 0);
   if (mode != Matchmaking::DIRECT && mode != Matchmaking::TEAMS) return false;
+  if (ffa && mode != Matchmaking::TEAMS) return false;
   if (!g_user) init();
   if (session_mode() >= 0 || g_warmup_parked) {
     if (error) *error = g_warmup_parked ? "Warming up: go back to your match first" : "An online session is already active";
@@ -3067,7 +3107,9 @@ bool arena_start_search(int mode, const std::string& code, bool locked, uint8_t 
   find[0] = (uint8_t)mode;
   const std::string sjis = utf8_to_shiftjis(code);
   std::memcpy(find + 1, sjis.data(), std::min<size_t>(18, sjis.size()));
+  g_arena_ffa_next = ffa;
   start_find_match(find);
+  g_arena_ffa_next = false;   // refused before the search read it: never carried to the player's next search
   if (!g_forced_error.empty()) {
     if (error) *error = g_forced_error;
     return false;
@@ -3076,14 +3118,14 @@ bool arena_start_search(int mode, const std::string& code, bool locked, uint8_t 
 }
 
 bool arena_start_yg_search(int mode, const std::vector<std::string>& fighters, const std::string& code, bool locked,
-                           uint8_t character, uint8_t color, uint8_t team, std::string* error) {
-  if (fighters.size() != 2 && fighters.size() != 4) return false;
+                           uint8_t character, uint8_t color, uint8_t team, bool ffa, std::string* error) {
+  if (fighters.size() < 2 || fighters.size() > 4) return false;
   if (!yougame::session()) {
     if (error) *error = "The arena needs a YouGame sign-in";
     return false;
   }
-  g_arena_next = {fighters, utf8_to_shiftjis(code)};
-  const bool ok = arena_start_search(mode, code, locked, character, color, team, error);
+  g_arena_next = {fighters, utf8_to_shiftjis(code), ffa};
+  const bool ok = arena_start_search(mode, code, locked, character, color, team, ffa, error);
   g_arena_next = ArenaNext{};   // refused before the search read it: never carried to the player's next search
   return ok;
 }
@@ -3102,7 +3144,10 @@ std::unique_ptr<Matchmaking> arena_matchmaking() {
   // Room links search on their own (not through start_find_match): they need this game's own hold on
   // Windows networking (the spectator server lets go of its own when it cannot open its port).
   if (!enet_ready()) return nullptr;
-  return g_user ? std::make_unique<Matchmaking>(g_user.get()) : nullptr;
+  if (!g_user) return nullptr;
+  auto mm = std::make_unique<Matchmaking>(g_user.get());
+  mm->SetRoomLink(true);
+  return mm;
 }
 
 bool arena_pop_from_match(std::vector<uint8_t>& out) { return g_netplay && g_netplay->PopArena(out); }
@@ -3713,6 +3758,31 @@ bool handle_command(uint8_t cmd, const uint8_t* payload, uint32_t payload_len, s
     // Disable the console's second offline queue so inputs are delayed once.
     case CMD_GET_DELAY: q.clear(); q.push_back(session_mode() >= 0 ? 1 : 0);
       q.push_back(session_mode() >= 0 ? (uint8_t)effective_delay() : 0); return true;
+    // This machine's Pro AI seat in the match it plays (shim/mu_online.c drives its partner pad from the
+    // model): active, the seat's port, its pro. Asked once per match. A room's Pro AI seat says so in the
+    // setup; the YouGame Friends Doubles home's Pro AI partner is the Player 2 seat Rooms gave this machine
+    // (id local:<connection>:1), named by the shim (payload: the pro, 0xFF none). Rooms never knows it is a
+    // model: the seat goes out as any Player 2's pad, so nothing else changes on any machine.
+    case CMD_PROAI_SEAT: {
+      q.assign(3, 0);
+      const uint8_t friends_pro = payload_len >= 1 ? payload[0] : 0xFF;
+      const auto lobby = yougame::friends_lobby();
+      const auto* p = lobby.open && lobby.plan && lobby.plan->ok ? lobby.plan.get() : nullptr;
+      const int second = p ? p->second_local_port : -1;
+      const bool in_setup = p && second >= 0 && second < p->ports;
+      const char* how = "none here";
+      if (in_setup && session_mode() >= 0 && p->port[second].pro >= 0) {
+        q[0] = 1; q[1] = (uint8_t)second; q[2] = (uint8_t)p->port[second].pro;
+        how = "the room's Pro AI seat";
+      } else if (in_setup && session_mode() >= 0 && friends_pro < 0x80 && p->port[second].local_index == 1 &&
+                 p->port[second].id.rfind("local:", 0) == 0) {
+        q[0] = 1; q[1] = (uint8_t)second; q[2] = friends_pro;
+        how = "the Friends partner, Player 2's seat";
+      }
+      host::log("slippi: Pro AI seat asked: setup %d, second local port %d, session %d, partner pro %d -> %s",
+                p ? 1 : 0, second, session_mode(), friends_pro == 0xFF ? -1 : (int)friends_pro, how);
+      return true;
+    }
     // Ranks: YouGame mode answers with its ladder rank; standalone never shows one (visibility 0
     // hides every rank display; the rest reads as unranked).
     case CMD_GET_RANK:
