@@ -5150,6 +5150,13 @@ void write_replay_recording(bool in_background) {
 #endif
   // Written already (the menu after GAME!, quitting): nothing to wait for here. end_process waits.
   if (g_replay_written || !g_replay_stream.active() || g_replay_spectator_only) return;
+  // The replay viewer saves only a game the player took part in (a takeover); a replay only watched is
+  // already on disk, and saving it again left a copy per watch (replay_control::took_over).
+  if (g_replaying && !replay_control::took_over()) {
+    g_replay_written = true;
+    host::log("replay: watched only, no copy saved");
+    return;
+  }
   host::wait_file_writes();   // an earlier match's file is on disk before this one is named
   std::vector<uint8_t> file = g_replay_stream.encode();
   if (file.empty()) {
@@ -5984,6 +5991,7 @@ bool set_replay(const char* path) {
   if (host::options.spectate)
     g_replay_stream.set_event_sink([](const uint8_t* data, uint32_t size) { slippi::arena::recording_event(data, size); });
 #endif
+  replay_control::forget_takeovers();
   if (!g_replay_stream.begin(g_replay_game_start, s->geckoCodes)) {
     host::log("replay: cannot start recording: %s", g_replay_stream.error().c_str());
     g_replay.reset();
