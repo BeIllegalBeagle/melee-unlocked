@@ -827,8 +827,9 @@ bool should_advance_online_frame(int32_t frame) {
   return false;
 }
 
-// The input delay this match uses. Auto: enough frames to cover half the round trip plus 4 ms of
-// jitter, never under Slippi's default 2 nor over 6; with no ping measured yet, the set value. The
+// The input delay this match uses. Auto: a quarter of the round trip in frames, never under Slippi's
+// default 2 nor over 4 (subframe rollback covers the rest: it used to cover half the round trip, 6 frames
+// at 166 ms, more than players choose by hand, owner 11-24); with no ping measured yet, the set value. The
 // game asks for it twice while a match is set up (CMD_GET_DELAY, then the match start block), so the
 // value is latched on the first ask and held until the match ends: both asks must agree.
 static int g_latched_delay = 0;
@@ -858,7 +859,7 @@ static int effective_delay() {
     host::log("slippi: auto delay: no ping from this opponent, using the set delay %d", g_latched_delay);
     return g_latched_delay;
   }
-  g_latched_delay = std::clamp((int)std::ceil((ping / 2.0 + 4.0) / 16.683), 2, 6);
+  g_latched_delay = std::clamp((int)std::lround(ping / 4.0 / 16.683), 2, 4);
   host::log("slippi: auto delay: %s ping %d ms, %d frames", match_ping > 0 ? "match" : "pre-match", ping, g_latched_delay);
   return g_latched_delay;
 }

@@ -10704,7 +10704,7 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
       }
       if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Applies from the next online match. Higher delay can reduce rollbacks.\n"
-                          "Auto picks 2 to 6 frames from ping at match start and holds it for that match.\n"
+                          "Auto picks 2 to 4 frames from ping at match start and holds it for that match.\n"
                           "Without a ping measurement, Auto uses the last manual online value (%d frames).",
                           slippi::online::config().delay);
       if (online == 1)
