@@ -162,6 +162,8 @@ struct RemixBridge::Impl {
   std::vector<uint8_t> hud;
   bool hud_new = false;
   std::string backbuffer_capture;   // D3D9 mode: save the next presented picture here
+  std::string final_capture;        // D3D9 mode: Remix's own picture of that frame, saved after later presents
+  int final_presents = 0;           // presents since that frame
   bool child = false;                // drawing inside the game's window (the renderer setting)
   int shown = -1;                    // the window's visibility as show() last set it (-1 not yet)
   int place_x = -1, place_y = -1;    // where place() last put that window
@@ -1136,6 +1138,41 @@ void RemixBridge::present_d3d9() {
       m.backbuffer_capture.clear();
     }
     dev->PresentEx(nullptr, nullptr, nullptr, nullptr, 0);
+    // Remix traces the scene handed over for this present at the present: its picture of this frame
+    // exists only now. Copied before (as until 11-23), test captures showed the previous frame's scene
+    // under this frame's layer and HUD (Falco a pose behind his shine's flash).
+    // Remix finishes a frame's picture a present or two later (11-23: copied right after its own present,
+    // Falco still stood in the pose of two frames before). MELEE_REMIX_CAPTURE_DELAY: presents to wait;
+    // MELEE_REMIX_CAPTURE_DELAYS="0,1,2,3" also saves <capture>.d<n>.ppm after each (to measure it).
+    if (!m.final_capture.empty()) {
+      static const int delay = [] { const char* v = std::getenv("MELEE_REMIX_CAPTURE_DELAY"); return v ? std::atoi(v) : 1; }();
+      static const std::string delays = [] { const char* v = std::getenv("MELEE_REMIX_CAPTURE_DELAYS"); return std::string(v ? v : ""); }();
+      const int n = m.final_presents++;
+      if (!delays.empty() && ("," + delays + ",").find("," + std::to_string(n) + ",") != std::string::npos) {
+        capture_output(m.final_capture + ".d" + std::to_string(n) + ".ppm", (int)REMIXAPI_DXVK_COPY_RENDERING_OUTPUT_TYPE_FINAL_COLOR);
+        // What that present put on screen (the swapchain's front buffer, Remix's picture with the layer).
+        IDirect3DSurface9* fb = nullptr;
+        bool ok = SUCCEEDED(dev->CreateOffscreenPlainSurface((UINT)m.width, (UINT)m.height, D3DFMT_A8R8G8B8, D3DPOOL_SYSTEMMEM, &fb, nullptr));
+        const HRESULT hr = ok ? dev->GetFrontBufferData(0, fb) : E_FAIL;
+        D3DLOCKED_RECT lr{};
+        ok = ok && SUCCEEDED(hr) && SUCCEEDED(fb->LockRect(&lr, nullptr, D3DLOCK_READONLY));
+        if (ok) {
+          std::ofstream out(m.final_capture + ".front" + std::to_string(n) + ".ppm", std::ios::binary);
+          out << "P6\n" << m.width << " " << m.height << "\n255\n";
+          std::vector<uint8_t> row((size_t)m.width * 3);
+          for (int y = 0; y < m.height; ++y) {
+            const uint8_t* q = (const uint8_t*)lr.pBits + (size_t)y * lr.Pitch;
+            for (int x = 0; x < m.width; ++x) { row[x * 3] = q[x * 4 + 2]; row[x * 3 + 1] = q[x * 4 + 1]; row[x * 3 + 2] = q[x * 4]; }
+            out.write((const char*)row.data(), (std::streamsize)row.size());
+          }
+          fb->UnlockRect();
+        }
+        host::log("remix: front buffer after %d presents: %s (%08X)", n, ok ? "saved" : "failed", (unsigned)hr);
+        if (fb) fb->Release();
+      }
+      if (n == delay) capture_output(m.final_capture, (int)REMIXAPI_DXVK_COPY_RENDERING_OUTPUT_TYPE_FINAL_COLOR);
+      if (n >= delay && (delays.empty() || n >= 3)) { m.final_capture.clear(); m.final_presents = 0; }
+    }
 }
 
 void RemixBridge::present_2d() {
@@ -1192,7 +1229,12 @@ bool RemixBridge::capture(const std::string& path) {
   // The final picture, and the layer laid over it (<path>.layer.png, premultiplied RGBA): Remix's
   // composite of that layer happens at present, after both.
   Impl& m = *impl_;
-  if (m.d3d9_mode) m.backbuffer_capture = path + ".bb.ppm";
+  if (m.d3d9_mode) {
+    m.backbuffer_capture = path + ".bb.ppm";
+    m.final_capture = path;   // saved after the next present or a later one (present_d3d9)
+    m.final_presents = 0;
+    return started_ && m.device != nullptr;
+  }
   const bool ok = capture_output(path, (int)REMIXAPI_DXVK_COPY_RENDERING_OUTPUT_TYPE_FINAL_COLOR);
   return ok;
 }
