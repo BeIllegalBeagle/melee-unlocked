@@ -79,6 +79,9 @@ cbuffer Frame : register(b0) {
 static const uint kShadows = 1u, kAmbientOcclusion = 2u, kFighterShadows = 4u, kBounce = 8u, kReflections = 16u, kSkin = 32u,
                   kStageShade = 64u, kGlossyFloors = 128u, kModdedStage = 256u,
                   kModSheen = 512u, kModMirror = 1024u;   // Shiny floors on stage mods: sheen, or the old mirror
+// Look tests (MELEE_TEST_RTX_LOOK, 11-24, his "RTX looks stale"): 1 clear but faithful, 2 the painted
+// stage relit by the rays. Neither is a setting yet.
+static const uint kLookClear = 1u << 23, kLookRelight = 1u << 24;
 
 static const float kPi = 3.14159265;
 static const uint kNone = 0xFFFFFFFFu;
@@ -555,19 +558,33 @@ void main(uint3 id : SV_DispatchThreadID) {
       emit(px, baked + fx, albedo);
       return;
     }
+    const bool clear_look = (switches & kLookClear) != 0u;
+    if ((switches & kLookRelight) != 0u && nd.w < 800.0) {
+      // The painted art as a surface the rays light: the sky or what a bounce ray finds, and the sun
+      // with its full shadow, over the light it was painted under (ambient plus 0.6 of the sun), so a
+      // surface in open sun stays near its painted brightness and the rest follows the rays.
+      const Hit hb = trace_surface(origin, cosine_direction(n, rng), 1.0e5);
+      const float3 indirect_l = hb.found ? hit_radiance(hb, ambient_light, sun, sun_dir, sun_radius, rng) : ambient_light;
+      const float3 to_sun_r = cone_direction(-sun_dir, sun_radius, rng);
+      const float nl_r = saturate(dot(n, to_sun_r));
+      const float sun_vis = nl_r > 0.0 && visible_outside(origin, to_sun_r, 1.0e4, kCasters) ? 1.0 : 0.0;
+      const float3 painted_under = max(ambient_light + 0.6 * sun, 1e-3);
+      baked = albedo * min((indirect_l + sun * nl_r * sun_vis) / painted_under, 2.0);
+    }
     // Stage shadows and contact shade: the stage's own geometry casts the sun's shadow too, and a
     // short ray finds the corners and contacts (softened: the painted light has some already).
     const bool stage_shade = shadows && (switches & kStageShade) != 0u && nd.w < 800.0;   // not far backgrounds
     if (stage_shade && (switches & kAmbientOcclusion) != 0u &&
         !visible_outside(origin, cosine_direction(n, rng), ao_radius, kCasters))
-      baked *= darken(lerp(0.85, 0.7, look));
+      baked *= darken(clear_look ? 0.55 : lerp(0.85, 0.7, look));
     if (shadows && ((switches & kFighterShadows) != 0u || stage_shade) && any(sun > 0.0)) {
       const float3 to_sun = cone_direction(-sun_dir, sun_radius, rng);
       // Fighters' shadows reach kBakedShadowReach; the stage's own only its near parts (eaves,
       // platforms, ledges), not across to a far backdrop. They fall on ground (a surface facing up)
       // only: painted art facing the camera has its shading painted in, and a sun shadow from the
       // piece in front darkened whole shapes of it (Yoshi's Story's leaf balls, one dark disc each).
-      const bool by_stage = stage_shade && n.y > 0.5 && !visible_outside(origin, to_sun, 100.0, kCasters);
+      const bool facing = n.y > 0.5 || (clear_look && dot(n, to_sun) > 0.3);
+      const bool by_stage = stage_shade && facing && !visible_outside(origin, to_sun, clear_look ? 400.0 : 100.0, kCasters);
       if (dot(n, to_sun) > 0.0 && by_stage) {
         // As dark as the stage's own shade: GX's share of ambient in its light (Faithful, softened),
         // or the physical one (Remastered).
@@ -597,7 +614,7 @@ void main(uint3 id : SV_DispatchThreadID) {
       // Shiny floors on stage mods: a sheen (half as strong, blurred), or the old guess in full.
       const bool modded = (switches & kModdedStage) != 0u;
       const bool sheen = modded && (switches & kModSheen) != 0u && roughness > 0.3;
-      const float guess = !modded ? polished_floor(albedo) : (switches & kModMirror) != 0u ? polished_floor(albedo) : sheen ? 0.5 * polished_floor(albedo) : 0.0;
+      const float guess = !modded ? (clear_look ? max(polished_floor(albedo), 0.5 * not_grass(albedo)) : polished_floor(albedo)) : (switches & kModMirror) != 0u ? polished_floor(albedo) : sheen ? 0.5 * polished_floor(albedo) : 0.0;
       // Water (Fountain of Dreams): at least kWaterReflection of the picture is the traced reflection.
       const float3 fresnel = water ? max(floor_fresnel(n, v), kWaterReflection) : floor_fresnel(n, v) * (roughness <= 0.3 ? 1.0 : guess);
       if (fresnel.x > 0.0 && water) {
@@ -608,6 +625,11 @@ void main(uint3 id : SV_DispatchThreadID) {
         if (fx_light_count != 0u) baked += fresnel * fx_mirror(p, n, v, kFloorRoughness);
         write_guides(px, albedo, fresnel, nd.xyz, kFloorRoughness);
       }
+    }
+    if (clear_look && (switches & kBounce) != 0u && nd.w < 800.0) {
+      // Colour bounced from what a ray finds nearby, over the stage's own ambient.
+      const Hit hb = trace_surface(origin, cosine_direction(n, rng), 300.0);
+      if (hb.found) baked += albedo * max(hit_radiance(hb, ambient_light, sun, sun_dir, sun_radius, rng) - ambient_light, 0.0) * 0.5 * bounce_strength;
     }
     emit(px, baked + fx, albedo);
     return;

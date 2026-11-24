@@ -84,7 +84,7 @@ static bool texgen_uv(const DrawCall& d, const Vertex& v, int k, float out[2]) {
 }
 
 // An sRGB RGBA8 DDS (DX10 header), the format Remix reads albedo from.
-bool write_dds(const std::filesystem::path& path, uint32_t w, uint32_t h, const std::vector<uint8_t>& rgba, bool mips = false) {
+static bool write_dds_file(const std::filesystem::path& path, uint32_t w, uint32_t h, const std::vector<uint8_t>& rgba, bool mips) {
   std::ofstream f(path, std::ios::binary);
   if (!f) return false;
   uint32_t header[32] = {};
@@ -130,6 +130,17 @@ bool write_dds(const std::filesystem::path& path, uint32_t w, uint32_t h, const 
     cur.swap(next); cw = nw; ch = nh;
   }
   return (bool)f;
+}
+// Written whole to a side file, then renamed into place: a crash mid-write (11-24) left two textures
+// cut off at 4096 bytes in the shared cache, and Remix crashed loading them on every run after.
+bool write_dds(const std::filesystem::path& path, uint32_t w, uint32_t h, const std::vector<uint8_t>& rgba, bool mips = false) {
+  std::filesystem::path part = path;
+  part += L".part";
+  std::error_code ec;
+  if (!write_dds_file(part, w, h, rgba, mips)) { std::filesystem::remove(part, ec); return false; }
+  std::filesystem::rename(part, path, ec);
+  if (ec) std::filesystem::remove(part, ec);
+  return std::filesystem::exists(path);
 }
 
 LRESULT CALLBACK remix_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) { return DefWindowProcW(hwnd, msg, wp, lp); }
@@ -653,7 +664,10 @@ void RemixBridge::frame(const Frame& f, int camera, const float vw[12], const st
     }
     if (!mat_key && !no_textures && t.used && t.data && t.width && t.height && t.width <= 1024 && t.height <= 1024) {
       const uint32_t pad_key = pad_u << 16 | pad_v;
-      mat_key = fnv(&pad_key, 4, fnv(&t.data->hash, 8, fnv(&t.format, 4, fnv(&t.mode0, 4, fnv(&emissive, 4, fnv(&tint_q, 4, fnv(&test_key, 4, cutout ? 0x9E3779B97F4A7C15ull : 1469598103934665603ull)))))));
+      uint64_t second = 0;
+      if (fighter) for (int k = 1; k < 8; ++k) if (d.textures[k].used && d.textures[k].data) second = second * 31 + d.textures[k].data->hash;
+      second ^= 0xF16E7E0Bull;   // fighter surface bake (11-24)
+      mat_key = fnv(&second, 8, fnv(&pad_key, 4, fnv(&t.data->hash, 8, fnv(&t.format, 4, fnv(&t.mode0, 4, fnv(&emissive, 4, fnv(&tint_q, 4, fnv(&test_key, 4, cutout ? 0x9E3779B97F4A7C15ull : 1469598103934665603ull))))))));
       if (!m.materials.count(mat_key)) {
         decode_texture(t.data->image.data(), t.width, t.height, t.format, t.data->palette.empty() ? nullptr : t.data->palette.data(),
                        t.tlut_format, m.rgba);
@@ -668,9 +682,52 @@ void RemixBridge::frame(const Frame& f, int camera, const float vw[12], const st
             if (d.bp.order_enable((int)n) && d.bp.order_texmap((int)n) != own_map) return true;
           return false;
         }();
+        // Fighters: their surface colour is what the combiner makes before it reads the light (Marth's
+        // cape: a dark konst colour lerped toward a pale cloth texture; Yoshi: his belly and eye a second
+        // texture laid over by its alpha), times the material colour. Texture 0 alone (until 11-24) made
+        // dark cloth pale and lost decals. The stages after the light (a blend toward white by a register,
+        // a konst highlight) mean something only with GX lighting: Remix lights them. A second texture
+        // read with the same coordinates as the first comes in; any other is left out.
+        // MELEE_REMIX_FIGHTER_TEXTURE0=1: texture 0 alone, as before.
+        static const bool fighter_tex0 = std::getenv("MELEE_REMIX_FIGHTER_TEXTURE0") != nullptr;
+        if (fighter && !no_tev && !fighter_tex0) {
+          int own_stage = -1, map2 = -1, stage2 = -1;
+          for (uint32_t n = 0; n <= d.bp.numtevstages() && n < 16; ++n) {
+            if (!d.bp.order_enable((int)n)) continue;
+            if (own_stage < 0 && d.bp.order_texmap((int)n) == own_map) own_stage = (int)n;
+            else if (map2 < 0 && d.bp.order_texmap((int)n) != own_map) { map2 = d.bp.order_texmap((int)n); stage2 = (int)n; }
+          }
+          const TextureRef* t2 = map2 >= 0 && map2 < 8 ? &d.textures[map2] : nullptr;
+          const bool same_coords = t2 && own_stage >= 0 && d.bp.order_texcoord(stage2) == d.bp.order_texcoord(own_stage);
+          std::vector<uint8_t> rgba2;
+          // A paletted texture needs its whole palette (decode_texture reads it unchecked: Fountain of Dreams
+          // crashed on one without).
+          const size_t palette_needed = !t2 ? 0 : t2->format == 8 ? 32 : t2->format == 9 ? 512 : t2->format == 10 ? 32768 : 0;
+          if (same_coords && t2->used && t2->data && t2->width && t2->height && t2->width <= 1024 && t2->height <= 1024 &&
+              t2->data->palette.size() >= palette_needed &&
+              t2->data->image.size() >= texture_level_bytes(t2->width, t2->height, t2->format))
+            decode_texture(t2->data->image.data(), t2->width, t2->height, t2->format, t2->data->palette.empty() ? nullptr : t2->data->palette.data(),
+                           t2->tlut_format, rgba2);
+          const float white[4] = {255.0f, 255.0f, 255.0f, 255.0f};
+          for (uint32_t y = 0; y < t.height; ++y)
+            for (uint32_t x = 0; x < t.width; ++x) {
+              const size_t i = ((size_t)y * t.width + x) * 4;
+              if (i + 3 >= m.rgba.size()) break;
+              const float texel[4] = {(float)m.rgba[i], (float)m.rgba[i + 1], (float)m.rgba[i + 2], (float)m.rgba[i + 3]};
+              float texel2[4];
+              const bool have2 = !rgba2.empty();
+              if (have2) {
+                const size_t j = (((size_t)(y * t2->height / t.height)) * t2->width + (size_t)(x * t2->width / t.width)) * 4;
+                for (int k = 0; k < 4; ++k) texel2[k] = rgba2[j + k];
+              }
+              float o[4];
+              tev_texel(d, own_map, texel, white, o, have2 ? map2 : -1, have2 ? texel2 : nullptr, true);
+              for (int k = 0; k < 3; ++k) m.rgba[i + k] = (uint8_t)std::min(255.0f, o[k] * tint[k] + 0.5f);
+            }
+        }
         for (size_t i = 0; i + 3 < m.rgba.size(); i += 4) {
-          // Fighters: texture x material. Their later combiner stages blend toward white by a register
-          // that only means something with GX lighting (baked flat it turns them pastel).
+          if (fighter && !no_tev && !fighter_tex0) break;   // baked above
+          // Fighters (MELEE_REMIX_FIGHTER_TEXTURE0): texture x material.
           if (no_tev || fighter) { for (int k = 0; k < 3; ++k) m.rgba[i + k] = (uint8_t)std::min(255.0f, m.rgba[i + k] * tint[k] + 0.5f); continue; }
           const float texel[4] = {(float)m.rgba[i], (float)m.rgba[i + 1], (float)m.rgba[i + 2], (float)m.rgba[i + 3]};
           float o[4];
@@ -719,6 +776,10 @@ void RemixBridge::frame(const Frame& f, int camera, const float vw[12], const st
         }
         static const float rough_scale = [] { const char* v = std::getenv("MELEE_REMIX_ROUGHNESS"); return v ? (float)std::atof(v) : 1.0f; }();
         rough = std::clamp(rough * rough_scale, 0.02f, 1.0f);
+        // Fighters' cloth and skin read as matte at least this rough (MELEE_REMIX_FIGHTER_ROUGH): glossier,
+        // Remix's bright sky lit them like satin and dark cloth washed to pale blue (Marth's cape).
+        static const float fighter_rough = [] { const char* v = std::getenv("MELEE_REMIX_FIGHTER_ROUGH"); return v ? (float)std::atof(v) : 0.0f; }();
+        if (fighter) rough = std::max(rough, fighter_rough);
         char name[40];
         // DDS with its mip chain (the classic header; the DX10 form made Remix 1.6.1 divide by zero).
         // MELEE_REMIX_PNG=1: PNG, one level.
