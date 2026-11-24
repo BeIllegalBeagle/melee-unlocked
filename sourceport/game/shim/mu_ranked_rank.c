@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <melee/gm/gm_1601.h>
+#include <melee/sc/types.h>
 #include <melee/lb/lbaudio_ax.h>
 #include <sysdolphin/baselib/aobj.h>
 #include <sysdolphin/baselib/gobj.h>
@@ -41,10 +42,10 @@ static const GXColor light_gray = {170, 173, 178, 255};
 /* slpCSS's rank_icons (mu_slippi_chat.c SlpCssChat, slot 5 after the chat window, the chat message,
  * the mode and the connect help). */
 typedef struct SlpCssRank {
-    void* chat_window;
-    void* chat_message;
-    void* mode;
-    void* connect_help;
+    DISC_PTR(void) chat_window;
+    DISC_PTR(void) chat_message;
+    DISC_PTR(void) mode;
+    DISC_PTR(void) connect_help;
     DISC_PTR(DynamicModelDesc) rank_icons;
 } DISC_STRUCT SlpCssRank;
 
