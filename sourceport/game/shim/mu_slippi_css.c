@@ -105,6 +105,8 @@ static const char spinner_done_str[3] = { (char) 0x81, 0x7C, 0 };
 
 /* The Friends lobby's 4-door select runs in the same online major but is Melee's VS select
  * (mu_friends4_css.inc), never this 1-door one. */
+int mu_lobby_css_friends4(void);   /* shim/mu_slippi_menu.c */
+
 int mu_slippi_css_online(void)
 {
     return mu_slippi_menus_enabled() && mu_slippi_on_online_css() && !mu_lobby_css();
@@ -369,7 +371,7 @@ void mu_slippi_css_hand(int port, float x, float y)
     /* The local player's hand: the controlled port's, or the one that moves. A controller in port 2
      * drives the online select's cursor while the controlled port stays 0, so the check on the port
      * alone never reported that player's hand and no room panel ever showed for them (0.9.201). */
-    lobby_select = mu_lobby_css();
+    lobby_select = mu_lobby_css_friends4();
     if (lobby_select) {
         if (!moved) return;   /* the Friends lobby's 4-door select: whichever hand moves */
     } else if (!mu_slippi_css_online() || ctrl_port == NULL || (port != *ctrl_port && !moved)) {
