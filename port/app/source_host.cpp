@@ -6577,6 +6577,12 @@ int run(void (*shutdown)(int)) {
   slippi::spectate::start();   // Slippi Dolphin's spectator server (settings: Spectator server)
   slippi::arena::set_recording_codes(std::vector<uint8_t>(std::begin(native_online_recording_codes), std::end(native_online_recording_codes)));
   slippi::arena::set_viewer_launcher(launch_arena_viewer);
+  // Tests only (hidden runs): MELEE_TEST_ARENA_VIEWER=<live .slp> opens the room's viewer on it at start,
+  // so the viewer launch is proven on each platform without a room (Linux had a stub, report 11-24).
+  if (const char* v = host::test_env::getenv("MELEE_TEST_ARENA_VIEWER"); v && *v) {
+    void* viewer = launch_arena_viewer(v);
+    host::log("arena test: viewer launch on %s %s", v, viewer ? "started" : "failed");
+  }
   slippi::arena::set_friends_exit([] { slippi::native_practice::submit_arena_from_friends(); });
 #endif
 #ifdef __APPLE__
