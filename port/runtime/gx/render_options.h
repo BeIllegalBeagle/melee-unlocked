@@ -262,7 +262,8 @@ struct RenderOptions {
   // "Stronger Pro AI (Requires additional download)" (Practice menu > Fight a pro, ini key
   // proaistronger): 0 ask, 1 always, 2 never (phillip_ai::StrongerChoice).
   int pro_ai_stronger = 0;
-  int pro_ai_extra_delay = 0;   // frames added to the Pro AI's own reaction (phillip_ai::set_extra_delay)
+  int pro_ai_extra_delay = 0;
+  int vs_pro[4] = {-1, -1, -1, -1};   // VS Mode: the pro each port's CPU plays as, -1 the game's CPU (practice_cpu::vs_pro)   // frames added to the Pro AI's own reaction (phillip_ai::set_extra_delay)
   // "Unlock everything" (Game tab, ini key unlock_all, on unless the file says 0): Slippi's "Unlock
   // All Characters and Stages". Off, the save file decides what is unlocked, offline only: a network
   // session always has everything. Static Recomp: gecko::option_unlock_all (host.cpp); Source Port:

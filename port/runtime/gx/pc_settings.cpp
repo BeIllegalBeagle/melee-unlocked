@@ -49,6 +49,7 @@
 #include "native_practice.h"
 #endif
 #include "practice_cpu.h"
+#include "practice_ghosts.h"
 #include "window.h"
 #include "audio.h"
 #include "host.h"
@@ -2624,6 +2625,11 @@ void load_pc_settings(RenderOptions& options, int& volume) {
       else if (key == "community_codes") options.community_codes = (uint32_t)std::strtoul(value.c_str(), nullptr, 16) & (MU_DISPLAY_OPTION_CODES_ALL | MU_DISPLAY_OPTION_OFFLINE_CODES);
       else if (key == "unlock_all") options.unlock_all = value != "0";
       else if (key == "zelda_as_sheik") options.zelda_as_sheik = value == "1";
+      else if (key == "vspro") {
+        int v[4] = {-1, -1, -1, -1};
+        std::sscanf(value.c_str(), "%d,%d,%d,%d", &v[0], &v[1], &v[2], &v[3]);
+        for (int i = 0; i < 4; ++i) options.vs_pro[i] = std::clamp(v[i], -1, 99);
+      }
       else if (key == "results_screen") options.results_screen = value != "0";
       else if (key == "training_hud") options.training_hud = value != "0";
 #ifndef MELEE_NO_SLIPPI
@@ -2916,6 +2922,7 @@ void load_pc_settings(RenderOptions& options, int& volume) {
   phillip_ai::set_stronger_choice(options.pro_ai_stronger);
   host::settings_shortcut::practice_chord().store((uint16_t)options.practice_chord, std::memory_order_relaxed);
   phillip_ai::set_extra_delay(options.pro_ai_extra_delay);
+  for (int port = 0; port < 4; ++port) practice_cpu::set_vs_pro(port, options.vs_pro[port]);
   RenderOptions::live_unlock_all() = options.unlock_all;
   RenderOptions::live_zelda_as_sheik() = options.zelda_as_sheik;
   RenderOptions::live_results_screen() = options.results_screen;
@@ -5340,6 +5347,7 @@ static bool write_settings_file_impl(const SettingsState& state, const RenderOpt
        << "\ncommunity_codes " << std::hex << options.community_codes << std::dec
        << "\nproaistronger " << options.pro_ai_stronger
        << "\nproaireaction " << options.pro_ai_extra_delay
+       << "\nvspro " << options.vs_pro[0] << "," << options.vs_pro[1] << "," << options.vs_pro[2] << "," << options.vs_pro[3]
        << "\nunlock_all " << (options.unlock_all ? 1 : 0)
        << "\nzelda_as_sheik " << (options.zelda_as_sheik ? 1 : 0)
        << "\nresults_screen " << (options.results_screen ? 1 : 0)
@@ -10569,6 +10577,39 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
       ImGui::SetTooltip("When you pick Zelda, the match starts as Sheik, as holding A at the start does in Versus.\n"
                         "Works in every mode, rogueMelee included. Down B still changes between them.\n"
                         "Offline only: online, use Slippi's own character choice. Source Port only.");
+    {
+      // VS Mode CPU slots can be a Pro AI (owner 11-23: "vs mode slots and people add them in, not during
+      // unranked or ranked"). Offline VS only; the game library and the host both refuse it online.
+      ImGui::SeparatorText("Pro AI in VS Mode");
+      struct Choice { int pro; std::string name; };
+      static std::vector<Choice> choices;
+      if (choices.empty()) {
+        choices.push_back({-1, "Game CPU"});
+        const int count = (int)(sizeof practice_ghosts::kGhosts / sizeof practice_ghosts::kGhosts[0]);
+        for (int i = 0; i < count; ++i)
+          if (practice_ghosts::kReleased[i])
+            choices.push_back({i, std::string(practice_ghosts::kGhosts[i].name) + " (" + practice_ghosts::kGhosts[i].character + ")"});
+      }
+      static std::vector<const char*> labels;
+      if (labels.empty()) for (const Choice& c : choices) labels.push_back(c.name.c_str());
+      for (int port = 0; port < 4; ++port) {
+        int at = 0;
+        for (int i = 0; i < (int)choices.size(); ++i) if (choices[i].pro == options.vs_pro[port]) at = i;
+        char label[32];
+        std::snprintf(label, sizeof label, "P%d as a CPU plays", port + 1);
+        ImGui::SetNextItemWidth(220.0f);
+        if (settings_combo(label, &at, labels.data(), (int)labels.size())) {
+          options.vs_pro[port] = choices[at].pro;
+          practice_cpu::set_vs_pro(port, options.vs_pro[port]);
+          changed = true;
+        }
+        if (ImGui::IsItemHovered())
+          ImGui::SetTooltip("When this port is a CPU in VS Mode, the pro plays it instead of the game's CPU.\n"
+                            "Each pro plays the characters its AI knows (Zain: Marth, Cody: Fox, Mang0: Falco,\n"
+                            "aMSa: Yoshi); other characters stay the game's CPU. Two CPU ports set to pros fight\n"
+                            "each other. Offline VS only: never online, in Unranked or Ranked.");
+      }
+    }
     if (settings_toggle("Show results screen", &options.results_screen)) {
       RenderOptions::live_results_screen() = options.results_screen;
       changed = true;

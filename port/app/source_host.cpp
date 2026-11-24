@@ -2359,6 +2359,7 @@ constexpr uint8_t CMD_SELFTEST_KEEP = 0xF0, CMD_SELFTEST_COMPARE = 0xF1;   // na
 // a lab load keeps the state again at once and it can be returned to as often as wanted.
 constexpr uint8_t CMD_LAB_SAVE = 0xF2, CMD_LAB_LOAD = 0xF3, CMD_LAB_ADVANTAGE = 0xF4, CMD_CONTENT_MODE = 0xF5;
 constexpr uint8_t CMD_PRACTICE_CPU = 0xF6;   // the practice CPU's settings (port/runtime/hle/practice_cpu.h)
+constexpr uint8_t CMD_VS_PRO = 0xC8;   // VS Mode: the pro each port's CPU plays as (shim/mu_practice_cpu.c, practice_cpu::vs_pro)
 constexpr uint8_t CMD_FRAME_EVENT = 0xE8;   // replay frame data for the coach (shim/mu_framedata.c, host/replay_coach.h)
 constexpr uint8_t CMD_REPLAY_DEFENSE = 0xE9;   // a takeover's opponents once the game leaves the replay (shim/mu_replay_defend.c)
 constexpr uint8_t CMD_ZELDA_AS_SHEIK = 0xDE;  // a human's Zelda starts as Sheik (shim/mu_slippi_css.c): offline only; upstream 0xE6, CMD_YOUGAME_FRIENDS_MENU in this build
@@ -2995,6 +2996,15 @@ int32_t h_slippi_command(uint8_t command, const uint8_t* payload, uint32_t paylo
           append_be32(reply, slippi::online::arena_pairing());
           // bit 0: the room locks in a random stage itself (tests); bit 1: this player is in a room now
           reply.push_back((slippi::arena::locks_in_itself() ? 1 : 0) | (slippi::arena::in_room() ? 2 : 0));
+          return true;
+        }
+        if (c == CMD_VS_PRO) {   // shim/mu_practice_cpu.c: one byte per port, 0xFF for the game's own CPU
+          // Never in an online match or a replay, whatever the game library asks.
+          const bool offline = !g_replaying && !slippi::online::is_online_match();
+          for (int port = 0; port < 4; ++port) {
+            const int pro = offline ? practice_cpu::vs_pro(port) : -1;
+            reply.push_back(pro < 0 ? 0xFF : (uint8_t)pro);
+          }
           return true;
         }
         if (c == CMD_PRACTICE_CPU) {   // shim/mu_practice_cpu.c: the settings, or what it is doing
