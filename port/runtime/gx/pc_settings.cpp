@@ -5132,6 +5132,17 @@ static void draw_arena_panel(RenderOptions& options, const host::PadState* pads,
   f.on_online_menus = ((slippi::online::in_online_menus() || friends_lobby) && slippi::arena::css_hand(&hand_x, &hand_y) &&
                        !slippi::arena::css_ranked_or_unranked()) ||
                       slippi::arena::test_fixture_active();
+  {
+    // Logged on a change: whether the room panel is offered on this select, and what decided it.
+    static int last = -1;
+    const int now = (f.on_online_menus ? 1 : 0) | (friends_lobby ? 2 : 0) | (slippi::arena::css_friends_lobby() ? 4 : 0) |
+                    (slippi::online::friends_lobby_armed() ? 8 : 0) | (yougame::session() ? 16 : 0) | (slippi::online::in_online_menus() ? 32 : 0);
+    if (now != last && (now & 4 || last & 4)) {
+      last = now;
+      host::log("arena panel: on the Friends lobby's select: %s (lobby select %d, armed %d, YouGame %d, online menus %d)",
+                f.on_online_menus ? "offered" : "not offered", (now >> 2) & 1, (now >> 3) & 1, (now >> 4) & 1, (now >> 5) & 1);
+    } else if (now != last) last = now;
+  }
   arena_panel::frame(f);
 }
 #endif
