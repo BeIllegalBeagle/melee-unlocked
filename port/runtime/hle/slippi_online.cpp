@@ -2811,10 +2811,12 @@ bool native_start_match(int mode, const std::string& connect_code, uint8_t chara
 
 // The Doubles row's press (CMD_YOUGAME_FRIENDS_MENU 16), taken once by native_practice's tick.
 std::atomic<bool> g_doubles_lobby_request{false};
+std::atomic<bool> g_doubles_lobby_ranked{false};   // the queue of the last Doubles row press (its slider)
 bool take_doubles_lobby_request() { return g_doubles_lobby_request.exchange(false); }
+bool doubles_lobby_ranked() { return g_doubles_lobby_ranked.load(); }
 
 void arm_friends_lobby(const std::string& room) { arm_friends_lobby(room, yougame::lobby::Profile::Friends4); }
-void arm_friends_lobby(const std::string& room, yougame::lobby::Profile profile) {
+void arm_friends_lobby(const std::string& room, yougame::lobby::Profile profile, bool ranked) {
   auto& lobby = g_friends_lobby;
   if (lobby.invite_stop) lobby.invite_stop->store(true);
   lobby = FriendsLobby{};
@@ -2823,11 +2825,13 @@ void arm_friends_lobby(const std::string& room, yougame::lobby::Profile profile)
   lobby.guest = !room.empty();
   lobby.room = room;
   lobby.profile = profile;
-  lobby.control = std::make_shared<yougame::lobby::Control>(profile);
+  // Only the player who opens a home chooses its queue; a guest takes the home's (Rooms' state says).
+  lobby.control = std::make_shared<yougame::lobby::Control>(profile, ranked && room.empty());
   const bool doubles = profile == yougame::lobby::Profile::Doubles;
   host::log("%s: %s", doubles ? "doubles" : "friends lobby",
             lobby.guest ? (doubles ? "joining a friend's Doubles home" : "joining a friend's lobby")
-                        : (doubles ? "opening a Doubles home" : "opening a lobby"));
+                        : (doubles ? (lobby.control->ranked_choice() ? "opening a Ranked Doubles home" : "opening a Doubles home")
+                                   : "opening a lobby"));
   if (!start_lobby_search() && !g_forced_error.empty()) {
     host::log("friends lobby: the search can't start (%s)", g_forced_error.c_str());
     lobby.closed = true;
@@ -3652,8 +3656,9 @@ bool handle_command(uint8_t cmd, const uint8_t* payload, uint32_t payload_len, s
         return true;
       }
 #endif
-      if (payload[0] == 16) { // the Doubles row (G2): open the 2-seat Doubles home's select (native_practice arms it)
-        if (yougame::session()) g_doubles_lobby_request = true;   // the app's layout, and the launcher's Doubles row
+      if (payload[0] == 16 || payload[0] == 17) { // the Doubles row (G2): open the 2-seat Doubles home's select (native_practice arms it)
+        // 17: the row's slider says Ranked Doubles. Stored before the request so its taker reads this press's choice.
+        if (yougame::session()) { g_doubles_lobby_ranked = payload[0] == 17; g_doubles_lobby_request = true; }
         return true;
       }
       if (payload[0] == 8) {
