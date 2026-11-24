@@ -12745,8 +12745,17 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
           std::snprintf(lines[n++], sizeof lines[0], "FPS: %.0f", ImGui::GetIO().Framerate);
       }
       if (ping_line) {
-        // Teams: each other player's ping, in port order, as Slippi shows them.
-        const std::vector<int> pings = slippi::online::remote_pings_ms();
+        // Teams: each other player's ping, in port order, as Slippi shows them. The numbers are read once a
+        // second and held (lemon / owner 11-24: they changed several times a second and could not be read).
+        static std::vector<int> pings;
+        static int single_ping = 0;
+        static double read_at = -1.0;
+        const double now = ImGui::GetTime();
+        if (read_at < 0.0 || now - read_at >= 1.0 || now < read_at) {
+          pings = slippi::online::remote_pings_ms();
+          single_ping = slippi::online::ping_ms();
+          read_at = now;
+        }
         if (pings.size() > 1) {
           int used = std::snprintf(lines[n], sizeof lines[0], "Ping:");
           for (size_t i = 0; i < pings.size() && used > 0 && used < (int)sizeof lines[0]; ++i)
@@ -12754,7 +12763,7 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
           if (used > 0 && used < (int)sizeof lines[0]) std::snprintf(lines[n] + used, sizeof lines[0] - used, " ms");
           ++n;
         } else {
-          std::snprintf(lines[n++], sizeof lines[0], "Ping: %d ms", slippi::online::ping_ms());
+          std::snprintf(lines[n++], sizeof lines[0], "Ping: %d ms", single_ping);
         }
       }
       if (options.reflex_stats && streamline::reflex_latency_ms() > 0.0f && n < 3)
