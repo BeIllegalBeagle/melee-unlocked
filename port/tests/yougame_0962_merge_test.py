@@ -97,7 +97,7 @@ class YouGame0962MergeTest(unittest.TestCase):
         self.assertIn("host::disc_read(vanilla_file_start + file_offset, dst, disc_size)", fallback)
         self.assertIn('found->second.target_path != "nr_name.ssm"', fallback)
         self.assertNotIn("stage_read_pin::pick", fallback)
-        self.assertLess(read.index("if (!found->second.online_allowed && online_now)"),
+        self.assertLess(read.index("if ((!found->second.online_allowed && online_now) || mod_setup)"),
                         read.index("stage_read_pin::pick"))
         scan = cosmetics.split("void scan_look_packs() {", 1)[1].split("void set_active_look_pack", 1)[0]
         self.assertNotIn("yougame::active()", scan)
