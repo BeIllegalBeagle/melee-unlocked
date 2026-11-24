@@ -193,8 +193,14 @@ static void open_log_file() {
                    startup_mark().c_str());
     std::fprintf(g_log_file, "%s\n", cpu_power_line("at start").c_str());
     // Started again by the last process after the graphics device was lost (restart_after_device_loss).
-    if (const char* lost = std::getenv("MELEE_DEVICE_LOST"))
-      std::fprintf(g_log_file, "started again after the graphics device was lost (restart %d)\n", std::atoi(lost));
+    // With what was lost: the lost process's own log is gone by the time a player sends logs from the
+    // new one (a Radeon 780M lost it twice at a Fountain of Dreams online start, 11-23, and the report
+    // said only "restart 2").
+    if (const char* lost = std::getenv("MELEE_DEVICE_LOST")) {
+      const char* why = std::getenv("MELEE_DEVICE_LOST_WHY");
+      std::fprintf(g_log_file, "started again after the graphics device was lost (restart %d)%s%s\n", std::atoi(lost),
+                   why && *why ? ": " : "", why ? why : "");
+    }
   }
 }
 
@@ -1362,7 +1368,24 @@ bool exit_requested() { return g_exit; }
 void request_exit(int code) { g_exit_code.store(code); g_exit.store(true); }
 static std::atomic<bool> g_replay_viewing{false};
 void set_replay_viewing(bool on) { g_replay_viewing.store(on); }
-void request_user_exit() { request_exit(g_replay_viewing.load() ? kViewerClosedExit : 0); }
+// The player closed the window. If the game is stuck and never gets to its own exit, the process stayed
+// in the background holding the controllers and the adapter (a replay that froze, tyler631 11-23: the
+// adapter read "in use by another program" until Task Manager ended it). A closed window ends the
+// process within kStuckExitSeconds whatever the game thread is doing, through end_process (logs, files
+// still being written and the shader caches are saved first).
+constexpr int kStuckExitSeconds = 10;
+void request_user_exit() {
+  request_exit(g_replay_viewing.load() ? kViewerClosedExit : 0);
+  static std::atomic<bool> armed{false};
+  if (armed.exchange(true)) return;
+  std::thread([] {
+    std::this_thread::sleep_for(std::chrono::seconds(kStuckExitSeconds));
+    if (process_ending()) return;
+    log("exit: still running %d s after the window was closed (the game is stuck); ending the process so it "
+        "lets go of the controllers", kStuckExitSeconds);
+    end_process(g_exit_code.load());
+  }).detach();
+}
 static void (*g_before_restart)() = nullptr;
 void set_before_restart(void (*hook)()) { g_before_restart = hook; }
 void request_restart() {
@@ -1399,6 +1422,11 @@ bool restart_after_device_loss(const char* why, bool (*switch_backend)()) {
   char env[64];
   std::snprintf(env, sizeof env, "%d:%lld", restarts + 1, now);
   SetEnvironmentVariableA("MELEE_DEVICE_LOST", env);
+  {   // what was lost, for the new process's log (bounded: a log line)
+    std::string why_text = why ? why : "";
+    if (why_text.size() > 200) why_text.resize(200);
+    SetEnvironmentVariableA("MELEE_DEVICE_LOST_WHY", why_text.c_str());
+  }
   std::wstring cmd = GetCommandLineW();
   if (g_before_restart) g_before_restart();
   STARTUPINFOW si{}; si.cb = sizeof si; PROCESS_INFORMATION pi{};
@@ -3793,6 +3821,19 @@ void retrace() {
     window_set_client_size(second ? resize_every.w2 : resize_every.w1, second ? resize_every.h2 : resize_every.h1);
   }
   if (options.frames && g_retraces >= options.frames) request_exit(0);
+  {
+    // MELEE_TEST_CLOSE_STUCK=<retrace> (tests only): the window is closed at that retrace and the game
+    // thread then hangs, as a stuck game does; the process must still end (request_user_exit).
+    static const uint32_t close_stuck = [] {
+      const char* v = host::test_env::getenv("MELEE_TEST_CLOSE_STUCK");
+      return v ? (uint32_t)std::strtoul(v, nullptr, 10) : 0u;
+    }();
+    if (close_stuck && g_retraces >= close_stuck) {
+      log("test: closing the window at retrace %u, then the game thread hangs", g_retraces);
+      request_user_exit();
+      for (;;) std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+  }
   log_stack_peak(false);
   test_stack_depth(false);
   if (g_exit) {
