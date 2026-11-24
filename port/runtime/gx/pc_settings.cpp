@@ -2329,6 +2329,7 @@ void load_pc_settings(RenderOptions& options, int& volume) {
   options.freeze_fd = false;
   options.hide_ko_explosions = false;
   options.hide_hud_emblems = false;
+  options.hide_percents = false;
   options.community_codes = 0;
   options.pro_ai_stronger = 0;   // a file without the key: ask
   options.pro_ai_extra_delay = 0;
@@ -2628,7 +2629,8 @@ void load_pc_settings(RenderOptions& options, int& volume) {
       else if (key == "cpu_20xx") options.cpu_20xx = value == "1";
       else if (key == "freeze_fd") options.freeze_fd = value == "1";
       else if (key == "hide_ko_explosions") options.hide_ko_explosions = value == "1";
-      else if (key == "hide_hud_emblems") options.hide_hud_emblems = value == "1";
+      else if (key == "hide_hud_emblems" || key == "hide_percents")
+        (key == "hide_percents" ? options.hide_percents : options.hide_hud_emblems) = value == "1";
       else if (key == "proaistronger") options.pro_ai_stronger = std::clamp(std::atoi(value.c_str()), 0, 2);
       else if (key == "community_codes") options.community_codes = (uint32_t)std::strtoul(value.c_str(), nullptr, 16) & (MU_DISPLAY_OPTION_CODES_ALL | MU_DISPLAY_OPTION_OFFLINE_CODES);
       else if (key == "unlock_all") options.unlock_all = value != "0";
@@ -2921,6 +2923,7 @@ void load_pc_settings(RenderOptions& options, int& volume) {
   host::g_freeze_fd.store(options.freeze_fd, std::memory_order_relaxed);
   host::g_hide_ko_explosions.store(options.hide_ko_explosions, std::memory_order_relaxed);
   host::g_hide_hud_emblems.store(options.hide_hud_emblems, std::memory_order_relaxed);
+  gx::set_hide_percents(options.hide_percents);
   host::g_community_codes.store(options.community_codes, std::memory_order_relaxed);
   phillip_ai::set_stronger_choice(options.pro_ai_stronger);
   host::settings_shortcut::practice_chord().store((uint16_t)options.practice_chord, std::memory_order_relaxed);
@@ -5360,6 +5363,7 @@ static bool write_settings_file_impl(const SettingsState& state, const RenderOpt
        << "\nfreeze_fd " << (options.freeze_fd ? 1 : 0)
        << "\nhide_ko_explosions " << (options.hide_ko_explosions ? 1 : 0)
        << "\nhide_hud_emblems " << (options.hide_hud_emblems ? 1 : 0)
+       << "\nhide_percents " << (options.hide_percents ? 1 : 0)
        << "\ncommunity_codes " << std::hex << options.community_codes << std::dec
        << "\nproaistronger " << options.pro_ai_stronger
        << "\nproaireaction " << options.pro_ai_extra_delay
@@ -11236,13 +11240,22 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
       ImGui::SetTooltip("No burst of colour when a fighter is KO'd off the side, top or bottom.\n"
                         "The match is exactly the same, so it also works online and in replays.\n"
                         "Picture only, yours alone. Both engines. Takes effect from the next KO.");
-    if (settings_toggle("Hide emblems behind percents", &options.hide_hud_emblems)) {
-      host::g_hide_hud_emblems.store(options.hide_hud_emblems, std::memory_order_relaxed);
-      changed = true;
+    {
+      // One row (owner 11-24: no more rows): the emblem switch, and UnclePunch's Hide HUD as "Hidden".
+      static const char* const kPercents[] = {"Shown", "Without emblems", "Hidden"};
+      int percents = options.hide_percents ? 2 : options.hide_hud_emblems ? 1 : 0;
+      if (settings_combo("Damage percents", &percents, kPercents, 3)) {
+        options.hide_hud_emblems = percents == 1;
+        options.hide_percents = percents == 2;
+        host::g_hide_hud_emblems.store(options.hide_hud_emblems, std::memory_order_relaxed);
+        gx::set_hide_percents(options.hide_percents);
+        changed = true;
+      }
+      if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Without emblems: no character emblem behind each player's damage percent (both engines).\n"
+                          "Hidden: no damage percents at all, as UnclePunch's Hide HUD code (Source Port).\n"
+                          "Picture only, yours alone: the match is the same, online and in replays too.");
     }
-    if (ImGui::IsItemHovered())
-      ImGui::SetTooltip("No character emblem behind each player's damage percent.\n"
-                        "Picture only, yours alone: the match is the same, online and in replays too. Both engines.");
 
     // Community codes: players' favourite Gecko codes, built in (shim/mu_code_features.c). Picture and
     // sound only, so each is yours alone, online and in replays too.

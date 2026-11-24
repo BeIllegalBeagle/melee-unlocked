@@ -257,6 +257,8 @@ struct RenderOptions {
   // "Hide emblems behind percents" (Video tab, ini key hide_hud_emblems, both engines): the character
   // emblem behind each damage percent is not drawn (host::g_hide_hud_emblems). Picture only.
   bool hide_hud_emblems = false;
+  // Damage percents: Hidden (owner 11-24, UnclePunch's Hide HUD code): no percents at all. Source Port.
+  bool hide_percents = false;
   // "Community codes" (HUD tab, ini key community_codes, Source Port): MU_DISPLAY_OPTION_CODES_ALL
   // bits, the native versions of players' Gecko codes (host::g_community_codes). Picture and sound.
   uint32_t community_codes = 0;
