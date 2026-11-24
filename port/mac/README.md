@@ -67,8 +67,8 @@ architectures, and B is 0 on x86-64, whose code is unchanged.
   Yoshi's Story moved without the stage's scale and online games there desynced
   against x86-64.
 - Under the Hardened Runtime (needed for notarization) the loader's mapped code
-  needs `com.apple.security.cs.allow-unsigned-executable-memory`; local builds
-  are not hardened.
+  needs `com.apple.security.cs.allow-unsigned-executable-memory`. Local builds
+  are not hardened; see "Signing for other Macs".
 - The app's Info.plist puts it in the games category with `LSSupportsGameMode`,
   so macOS turns on Game Mode when it is full screen, and names the app's own
   architecture in `LSArchitecturePriority`.
@@ -146,6 +146,46 @@ Without that file, the open panel comes up in front. If the disc sits in a
 protected folder, the first start waits on the privacy prompt, so use a clone
 outside them for tests (`cp -c disc.iso $T/`). While the panel is open, SIGTERM
 is not handled (SDL turns it into a quit event), so stop the app with `kill -9`.
+
+### Signing for other Macs
+
+`package_full.py` signs every app it makes ad hoc, without the hardened runtime,
+so lldb can attach. It also removes the build's rpath to `../deps` from the
+bundled binary, and draws `MeleeUnlocked.icns` from upstream's Windows icon
+(`make_icon.swift`). `sign_app.py` signs a finished app for other Macs:
+
+```sh
+python3 port/mac/sign_app.py build-mac-full-arm64-squad/MeleeUnlocked.app   # ad hoc, hardened
+python3 port/mac/sign_app.py <app> --identity "Developer ID Application: Name (TEAMID)" \
+  --notarize PROFILE --dmg dist/MeleeUnlocked.dmg
+```
+
+- The SDL library and the shader tools are signed first, then the app, all with
+  the hardened runtime and a secure timestamp.
+- The app's one entitlement is `com.apple.security.cs.allow-unsigned-executable-memory`
+  (`MeleeUnlocked.entitlements`). `elf_loader.cpp` maps `melee_game.so` into
+  anonymous memory and makes its code executable with `mprotect`. Without the
+  entitlement macOS kills the hardened app as the game starts (checked: exit 137).
+- `melee_game.so` is a Linux ELF, not Mach-O. It stays a resource, so the app's
+  signature seals it like any other file.
+- Library validation stays on with a Developer ID, because the app and its
+  libraries share a team. An ad hoc signature has no team, so the app could not
+  load its own SDL. `sign_app.py` turns library validation off for ad hoc
+  signatures only.
+- A Vulkan loader the player installed would fail library validation. The Vulkan
+  renderer needs MoltenVK bundled and signed with the app.
+- A hardened, ad hoc signed arm64 app runs the 600-frame smoke test, and its
+  signature still verifies afterwards: nothing writes inside the bundle.
+
+Players can double-click an app downloaded from the internet only when it has a
+Developer ID Application certificate (Apple Developer Program) and Apple has
+notarized it. Apple Development certificates are not accepted for this. To set
+up notarization once, store the credentials, using an app-specific password from
+account.apple.com:
+`xcrun notarytool store-credentials PROFILE --apple-id <id> --team-id <TEAMID>`.
+`--notarize` then submits the app, staples the ticket to it, and does the same
+for the disk image. An ad hoc app copied to another Mac opens only after the
+player allows it under System Settings > Privacy & Security.
 
 ## Staging agent-test variant
 

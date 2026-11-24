@@ -86,6 +86,17 @@ Each build takes a few minutes clean; later runs rebuild only what changed.
     LaunchServices start reading it there waits on a macOS privacy prompt on the user's screen.
   - Don't take window screenshots with `screencapture`: they make macOS ask the user to let the
     terminal record the screen.
+- Signing:
+  - `package_full.py` signs every app ad hoc, without the hardened runtime, so lldb can attach.
+  - `port/mac/sign_app.py` signs an app for other Macs: hardened runtime, secure timestamp, and
+    `port/mac/MeleeUnlocked.entitlements`. With `--identity`, `--notarize PROFILE` and `--dmg` it also
+    notarizes the app and makes a disk image.
+  - The only entitlement is `allow-unsigned-executable-memory`, for the ELF loader. Without it the
+    hardened app is killed as the game starts.
+  - Ad hoc hardened builds also turn off library validation, since there is no team ID to match.
+  - A double-click on other Macs needs a Developer ID Application certificate and notarization.
+    Apple Development certificates don't work for that.
+  - Never write inside the bundle at run time: it would break the signature.
 
 ## Testing
 
