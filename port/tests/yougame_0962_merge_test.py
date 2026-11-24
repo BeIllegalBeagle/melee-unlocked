@@ -92,7 +92,7 @@ class YouGame0962MergeTest(unittest.TestCase):
                 self.assertIn('constexpr const char* ' + kind + ' = "' + value + '";', cosmetics)
                 self.assertRegex(exact, r"file\.size,\s*true,\s*" + kind + r",")
         read = cosmetics.split("OverrideRead read(", 1)[1].split("std::atomic<OnlineProbe>", 1)[0]
-        fallback = read.split("if (!found->second.online_allowed && online_now) {", 1)[1]
+        fallback = read.split("if ((!found->second.online_allowed && online_now) || mod_setup) {", 1)[1]
         fallback = fallback.split("return OverrideRead::Success;", 1)[0]
         self.assertIn("host::disc_read(vanilla_file_start + file_offset, dst, disc_size)", fallback)
         self.assertIn('found->second.target_path != "nr_name.ssm"', fallback)
