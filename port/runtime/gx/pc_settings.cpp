@@ -30,6 +30,7 @@
 #include <cstring>
 #include <cstdarg>
 #include <cstdio>
+#include <ctime>
 #include <cfloat>
 #include <sstream>
 #include <sstream>
@@ -2517,7 +2518,7 @@ void load_pc_settings(RenderOptions& options, int& volume) {
       // showfps_yougame2: builds before 10-31 saved showfps_yougame 1 on every save (the old default),
       // so a new key lets every player start from today's default (off; on for agent runs) once.
       else if (key == "showfps_yougame2") saved_showfps_yougame = value == "1";
-      else if (key == "showvram") options.show_vram = value == "1";
+      else if (key == "showvram" || key == "showclock") (key == "showvram" ? options.show_vram : options.show_clock) = value == "1";
       else if (key == "showping" || key == "liveping") (key == "showping" ? options.show_ping : options.live_ping) = value == "1";
       else if (key == "netoverlay") net_overlay::set_enabled(value == "1");
       // Diagnostic, off unless someone is hunting a one-frame glitch: see RenderOptions::flicker_scan.
@@ -5216,7 +5217,7 @@ static bool write_settings_file_impl(const SettingsState& state, const RenderOpt
        << "\nshowfps " << (g_display_keys.yougame ? g_display_keys.show_fps : options.show_fps)
        << (g_display_keys.yougame ? std::string("\nshowfps_yougame2 ") + (options.show_fps ? "1" : "0")
            : g_display_keys.saved_showfps_yougame >= 0 ? "\nshowfps_yougame2 " + std::to_string(g_display_keys.saved_showfps_yougame) : std::string())
-       << "\nshowvram " << (options.show_vram ? 1 : 0) << "\nshowping " << options.show_ping << "\nliveping " << (options.live_ping ? 1 : 0)
+       << "\nshowvram " << (options.show_vram ? 1 : 0) << "\nshowping " << options.show_ping << "\nliveping " << (options.live_ping ? 1 : 0) << "\nshowclock " << (options.show_clock ? 1 : 0)
        << "\nnetoverlay " << (net_overlay::enabled() ? 1 : 0)
        << "\ndlss " << options.dlss_mode << "\nframegen " << options.frame_generation_mode
        << "\nfgmax " << options.fg_cached_max << "\nfgdynamic " << (options.fg_cached_dynamic ? 1 : 0)
@@ -12118,6 +12119,9 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
 #endif
     changed |= settings_toggle("Performance overlay", &options.performance_overlay);
     changed |= settings_toggle("FPS counter (top left)", &options.show_fps);
+    changed |= settings_toggle("Clock (under the FPS)", &options.show_clock);
+    if (ImGui::IsItemHovered())
+      ImGui::SetTooltip("The time of day in the top left corner, as Slippi Dolphin's clock shows it.");
     // VRAM has its own line in the Video tab, right by the settings that move it; no overlay needed.
     {
       // One row (owner 11-24: no more rows): off, the ping held a second at a time, or every reading.
@@ -12750,12 +12754,12 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
     if (test_readout) { options.show_fps = true; options.show_ping = true; options.performance_overlay = true; }
     const bool ping_line = options.show_ping && (slippi::online::is_online_match() || test_readout);
     const float line_h = ImGui::GetTextLineHeight() + 2.0f;
-    const float readout_h = 8.0f + line_h * 4;       // room for every line, so the graph never moves
+    const float readout_h = 8.0f + line_h * 5;       // room for every line, so the graph never moves
     const bool latency_line = options.reflex_stats && streamline::reflex_latency_ms() > 0.0f;
     float vram_used = 0, vram_total = 0;
     const bool vram_line = options.show_vram && vram_usage(&vram_used, &vram_total);
-    if ((options.show_fps || ping_line || latency_line || vram_line) && !clean_replay) {
-      char lines[4][40];
+    if ((options.show_fps || options.show_clock || ping_line || latency_line || vram_line) && !clean_replay) {
+      char lines[5][40];
       int n = 0;
       if (options.show_fps) {
         // Frames shown, and the game's own rate when it falls short of 60 (the frames shown can be many
@@ -12765,6 +12769,18 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
           std::snprintf(lines[n++], sizeof lines[0], "FPS: %.0f (game %.0f Hz)", ImGui::GetIO().Framerate, game_hz);
         else
           std::snprintf(lines[n++], sizeof lines[0], "FPS: %.0f", ImGui::GetIO().Framerate);
+      }
+      if (options.show_clock) {
+        // Slippi Dolphin's OSD clock (RenderBase.cpp, bShowOSDClock): std::put_time(localtime, "%X"), which in
+        // the C locale is HH:MM:SS, on the cyan text right under the FPS.
+        const std::time_t now = std::time(nullptr);
+        std::tm local{};
+#ifdef _WIN32
+        localtime_s(&local, &now);
+#else
+        localtime_r(&now, &local);
+#endif
+        std::strftime(lines[n++], sizeof lines[0], "%H:%M:%S", &local);
       }
       if (ping_line) {
         // Teams: each other player's ping, in port order, as Slippi shows them. The numbers are read once a
@@ -12788,9 +12804,9 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
           std::snprintf(lines[n++], sizeof lines[0], "Ping: %d ms", single_ping);
         }
       }
-      if (options.reflex_stats && streamline::reflex_latency_ms() > 0.0f && n < 3)
+      if (options.reflex_stats && streamline::reflex_latency_ms() > 0.0f && n < 4)
         std::snprintf(lines[n++], sizeof lines[0], "Render latency: %.1f ms", streamline::reflex_latency_ms());
-      if (vram_line) std::snprintf(lines[n++], sizeof lines[0], "VRAM: %.1f / %.1f GB", vram_used, vram_total);
+      if (vram_line && n < 5) std::snprintf(lines[n++], sizeof lines[0], "VRAM: %.1f / %.1f GB", vram_used, vram_total);
       const OverlayBounds bounds = overlay_bounds();
       ImVec2 at(bounds.left + 10, bounds.top + 8);
       float wide = 0;

@@ -86,7 +86,8 @@ struct RenderOptions {
   bool pc_settings = false, settings_open = false, performance_overlay = false;
   bool show_vram = false;
   bool show_fps = false, show_ping = true;
-  bool live_ping = false;   // the ping line shows every reading, not one a second (owner 11-24)
+  bool live_ping = false;
+  bool show_clock = false;  // Slippi Dolphin's OSD clock: the time of day under the FPS (owner 11-24)   // the ping line shows every reading, not one a second (owner 11-24)
   // The "Settings: F1" reminder in the corner. On for a new player, off for anyone who knows the
   // key and does not want it in a recording.
   bool settings_hint = false;   // the corner reminder is off by default; Overlays can turn it on
