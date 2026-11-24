@@ -224,7 +224,7 @@ static int vs_pro_for(int port)
     static unsigned char pros[4] = {0xFF, 0xFF, 0xFF, 0xFF};
     const int now = (int) gm_GetFrameCount();
     if (now != frame) {
-        unsigned char response[16];
+        static unsigned char response[4096];   /* the host's minimum reply capacity: a smaller buffer is refused */
         unsigned int got = 0;
         frame = now;
         if (mu_online_abi_command(CMD_VS_PRO, NULL, 0, response, sizeof response, &got) == 0 && got == 4) {
