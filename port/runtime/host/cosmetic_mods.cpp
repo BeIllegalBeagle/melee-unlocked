@@ -8,6 +8,7 @@
 #include "stage_dat_safety.h"
 #include "stage_read_pin.h"
 #include "stage_graft.h"
+#include "stage_floor_fit.h"
 
 #include "host.h"
 #include "updater.h"
@@ -6781,7 +6782,16 @@ bool stage_online_form(const std::vector<uint8_t>& clean, const std::vector<uint
                        std::vector<uint8_t>* online, std::string* detail, const std::string& stage_file) {
   std::string local;
   if (!detail) detail = &local;
-  if (stage_gameplay_matches(clean, skin, detail)) { if (online) online->clear(); return true; }
+  // Every form served online also draws its floors where the collision is (stage_floor_fit.h): 20XX's
+  // tilting Battlefield drew sloped platforms over flat ones online (CHARA, 11-23). A form that does
+  // not is passed over; with none left the standard stage is served online, as for any refused skin.
+  std::string floor_note;
+  bool floor_refused = false;   // a form was passed over for its floors: that is the reason given
+  if (stage_gameplay_matches(clean, skin, detail)) {
+    if (stage_safety::floor_art_fits(clean, skin, &floor_note)) { if (online) online->clear(); return true; }
+    *detail = floor_note;
+    return false;
+  }
   const std::string as_is = *detail;
   std::string note;
   // The skin's gameplay values put back to the original's (stage_safety::restore_gameplay): a skin
@@ -6794,9 +6804,13 @@ bool stage_online_form(const std::vector<uint8_t>& clean, const std::vector<uint
   // skins that set the music table and rebuild the stage were all served as the original online).
   if (stage_safety::restore_gameplay(clean, skin, &restored, &note)) {
     if (stage_draw_safe(restored, &note)) {
-      *detail = "the skin with the original stage's gameplay values";
-      if (online) *online = std::move(restored);
-      return true;
+      if (stage_safety::floor_art_fits(clean, restored, &floor_note)) {
+        *detail = "the skin with the original stage's gameplay values";
+        if (online) *online = std::move(restored);
+        return true;
+      }
+      note = floor_note;
+      floor_refused = true;
     }
   }
   // A copy restore_gameplay could only partly repair is still tried first, as 0.9.13 did.
@@ -6808,15 +6822,19 @@ bool stage_online_form(const std::vector<uint8_t>& clean, const std::vector<uint
     if (base->empty()) continue;
     std::string try_note;
     std::vector<uint8_t> out;
-    if (!stage_safety::graft_visuals(clean, *base, &out, &try_note, stage_safety::visual_only_models(stage_file))) {
+    if (!stage_safety::graft_visuals(clean, *base, &out, &try_note, stage_safety::visual_only_models(stage_file),
+                                      stage_safety::same_motion_models(stage_file))) {
       if (!drawn) note = try_note;
       continue;
     }
     if (!stage_draw_safe(out, &try_note)) { note = "drawn over the original: " + try_note; continue; }
+    if (!stage_safety::floor_art_fits(clean, out, &floor_note)) {
+      note = "drawn over the original: " + floor_note; floor_refused = true; continue;
+    }
     grafted = std::move(out); note = try_note; drawn = true;
     break;
   }
-  if (!drawn) { *detail = as_is + "; " + note; return false; }
+  if (!drawn) { *detail = floor_refused ? floor_note : as_is + "; " + note; return false; }
   *detail = "drawn over the original stage's gameplay (" + note + ")";
   if (online) *online = std::move(grafted);
   return true;
