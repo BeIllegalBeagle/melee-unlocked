@@ -238,8 +238,15 @@ inline json doubles_home_ticket(const std::string& compatibility, const std::str
 // friend pair (n 2) the party that keeps them on one team. A CPU partner is never a local player: the
 // server reads that seat from the frozen home.
 inline constexpr int kLocalPartnerCapability = 1;
+// Ranked Doubles: the same tickets on the ranked queue (ranked true, queue "ranked"), and no local partner
+// (ranked is people only). An unranked ticket is the one it always was.
+inline void doubles_ranked(json& t, bool queue) {
+  t["ranked"] = true;
+  if (queue) t["queue"] = "ranked";
+  t.erase("local_partner");
+}
 inline json doubles_queue_ticket(const std::string& compatibility, const std::string& home, const std::string& generation,
-                                 int humans) {
+                                 int humans, bool ranked = false) {
   if (room(json{{"room", home}}).empty()) throw std::runtime_error("Invalid YouGame friends room");
   if (!doubles_compatibility(compatibility)) throw std::runtime_error("Invalid Doubles compatibility");
   if (generation.empty() || generation.size() > 128) throw std::runtime_error("Invalid Doubles search");
@@ -247,16 +254,19 @@ inline json doubles_queue_ticket(const std::string& compatibility, const std::st
             {"party_room", home}, {"partySearch", generation}, {"queue", "casual"},
             {"local_partner", kLocalPartnerCapability}, {"lobby", doubles_lobby(compatibility, 4)}};
   if (humans == 2) t["party"] = {{"id", generation}, {"n", 2}};
+  if (ranked) doubles_ranked(t, true);
   return t;
 }
 // The match room's admission, and its renewals (rooms MU-DOUBLES-R2-REPORT: "a freshly minted match-admission
 // ticket can also use normal Teams mode/teamsLobby, players 4, casual and the same min4/maxLocal1 lobby, with
 // no room or party fields"). The queue's own ticket names the home (party_room, partySearch, party), which a
 // renewal in the match room must not.
-inline json doubles_match_ticket(const std::string& compatibility) {
+inline json doubles_match_ticket(const std::string& compatibility, bool ranked = false) {
   if (!doubles_compatibility(compatibility)) throw std::runtime_error("Invalid Doubles compatibility");
-  return {{"type", "mpTicket"}, {"mode", "teams"}, {"teamsLobby", 1}, {"players", 4}, {"ranked", false},
-          {"local_partner", kLocalPartnerCapability}, {"lobby", doubles_lobby(compatibility, 4)}};
+  json t = {{"type", "mpTicket"}, {"mode", "teams"}, {"teamsLobby", 1}, {"players", 4}, {"ranked", false},
+            {"local_partner", kLocalPartnerCapability}, {"lobby", doubles_lobby(compatibility, 4)}};
+  if (ranked) doubles_ranked(t, false);
+  return t;
 }
 // Room kinds (Events::room_kind): what a joined room turned out to be. kRoomArena is only ever an invite's
 // own word (inviteMode "arena"): the arena's 8-seat room (slippi_arena.cpp under YouGame) is joined as itself,
