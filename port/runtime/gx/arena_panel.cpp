@@ -924,8 +924,10 @@ void page_box(float x, float y, float w, const View& v) {
   }
 }
 
-// Z's word: under YouGame friends come in through the app's invite.
-const char* add_label() { return yougame::session() ? "Invite a friend" : "Add a friend's code"; }
+// Z's word: under YouGame with its app, friends come in through the app's invite; with no app (the launcher
+// alone), by connect code as on Slippi (slippi_arena.cpp yg_by_code).
+bool app_invites() { return yougame::session() && yougame::friends_flow(); }
+const char* add_label() { return app_invites() ? "Invite a friend" : "Add a friend's code"; }
 
 // ---------------------------------------------------------------- input
 void send_act(Act a, uint8_t arg = 0, const std::string& text = {}) { ar::act(a, arg, text); }
@@ -1012,7 +1014,7 @@ void press(Do what, const View& v) {
     case Do::Rules: if (v.active) { g.page = Page::Rules; g.row = 0; } break;
     case Do::AddCode:
       // Under YouGame a friend comes in through the app's invite for the room, not a typed code.
-      if (yougame::session()) send_act(Act::AddCode, 0, {});
+      if (app_invites()) send_act(Act::AddCode, 0, {});
       else open_code_page();
       break;
     case Do::Spot:

@@ -438,7 +438,7 @@ bool valid(const Room& r) {
     const Member& m = r.members[i];
     if (m.id >= kMaxMembers || (seen & (1u << m.id))) return false;
     seen |= 1u << m.id;
-    if (m.code.empty() || m.code.size() > kMaxCode || m.name.size() > kMaxName) return false;
+    if (m.code.empty() || m.code.size() > kMaxId || m.name.size() > kMaxName) return false;
     for (size_t j = 0; j < i; ++j) if (r.members[j].code == m.code) return false;
   }
   for (const Member& m : r.members) {
@@ -481,7 +481,8 @@ bool valid(const Room& r) {
 // ---------------------------------------------------------------- changes
 uint8_t join(Room& r, const std::string& code_in, const std::string& name_in) {
   if (r.members.size() >= (size_t)kMaxMembers) return kNone;
-  const std::string code = clean(code_in, kMaxCode, true), name = clean(name_in, kMaxName, false);
+  const bool slippi = code_in.find('#') != std::string::npos;   // a connect code; else a YouGame player id
+  const std::string code = clean(code_in, slippi ? kMaxCode : kMaxId, slippi), name = clean(name_in, kMaxName, false);
   if (code.empty()) return kNone;
   for (const Member& m : r.members) if (m.code == code) return kNone;
   uint8_t id = 0;
@@ -779,7 +780,7 @@ bool decode(const uint8_t* data, size_t size, Room& out) {
   for (uint8_t i = 0; i < count; ++i) {
     Member m;
     m.id = in.u8(); m.wins = in.u16(); m.losses = in.u16(); m.character = in.u8(); m.costume = in.u8();
-    m.code = in.str(kMaxCode); m.name = in.str(kMaxName);
+    m.code = in.str(kMaxId); m.name = in.str(kMaxName);
     if (!legacy) { m.bot_of = in.u8(); m.pro = in.u8(); }
     if (!in.ok) return false;
     r.members.push_back(std::move(m));
@@ -853,6 +854,18 @@ std::vector<std::pair<uint8_t, uint8_t>> wanted_links(const Room& r, int fanout)
   std::sort(links.begin(), links.end());
   links.erase(std::unique(links.begin(), links.end()), links.end());
   return links;
+}
+
+std::string arena_by_code_room(const std::string& connect_code) {
+  uint64_t h = 1469598103934665603ull;   // FNV-1a 64
+  for (char c : connect_code) {
+    h ^= (uint8_t)std::toupper((unsigned char)c);
+    h *= 1099511628211ull;
+  }
+  static const char kDigits[] = "abcdefghijklmnopqrstuvwxyz0123456789";
+  std::string room = "mu";
+  for (int i = 0; i < 10; ++i) { room += kDigits[h % 36]; h /= 36; }
+  return room;
 }
 
 }  // namespace slippi::arena

@@ -932,6 +932,34 @@ TEST(doubles_never_draws_fountain) {
 
 // The online select's hand and the Arena card (gx/arena_hand.h). The card out of a room sits at 0.42 of
 // the picture from its top: 4.58 of the select's units above the middle, about 6 units tall (1280x720).
+TEST(yougame_player_ids_stay_whole) {
+  // 11-24 production: "fb9a5f9a-ef4f-4beb-b984-011b74147a08" became "FB9A5F9A-E", so no game found its fighters.
+  Room r;
+  const std::string a = "fb9a5f9a-ef4f-4beb-b984-011b74147a08", b = "99f11b49-6ae3-42ea-b023-c34ec8b08dd1";
+  const uint8_t ia = join(r, a, "RetroKoala"), ib = join(r, b, "ShadowMango");
+  CHECK(find(r, ia) && find(r, ia)->code == a);
+  CHECK(find(r, ib) && find(r, ib)->code == b);
+  CHECK(join(r, a, "again") == kNone);
+  CHECK(join(r, "abcd#123", "Slippi")!= kNone && find(r, 2) && find(r, 2)->code == "ABCD#123");   // Slippi codes as before
+  r.ffa_allowed = true;
+  CHECK(add_bot(r, ia, 2, 0) != kNone);
+  const std::vector<uint8_t> wire = encode(r);
+  Room back;
+  CHECK(decode(wire.data(), wire.size(), back));
+  CHECK(find(back, ia) && find(back, ia)->code == a && find(back, ib) && find(back, ib)->code == b);
+  CHECK(join(r, std::string(60, 'f'), "long") != kNone && r.members.back().code.size() == kMaxId);
+}
+
+TEST(yougame_by_code_room_names) {
+  const std::string a = arena_by_code_room("SHAD#775"), b = arena_by_code_room("RETR#81");
+  CHECK(a.size() == 12 && b.size() == 12 && a.rfind("mu", 0) == 0);
+  for (char c : a + b) CHECK((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'));
+  CHECK(a != b);
+  CHECK(arena_by_code_room("shad#775") == a);   // case ignored, as typed codes are
+  CHECK(arena_by_code_room("SHAD#775") == a);   // the same every time, on every machine
+  CHECK(arena_by_code_room("SHAD#776") != a);
+}
+
 TEST(hand_reaches_the_card) {
   using namespace arena_hand;
   const float top = 4.58f, bottom = -1.5f;

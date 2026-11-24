@@ -1118,19 +1118,74 @@ bool yg_identity() {
   return true;
 }
 
+// Under the launcher with no YouGame app (no friend flow, so no app invites): friends meet by connect code, as on
+// Slippi. A host's arena room is named by its own YouGame connect code (arena_by_code_room), so a friend who adds
+// that code joins it. When two players each alone add each other, the lower code keeps hosting and the other
+// joins; a host still alone 60 s after adding a code joins that friend's room (the friend may be hosting others; the
+// wait is long so a friend whose first room opens slowly still finds the host there).
+bool yg_by_code() { return !yougame::friends_flow(); }
+struct YgByCode {
+  std::string adding;           // the code this lone host added and waits for
+  uint64_t adding_since = 0;
+  std::string rejoin;           // the friend's room this player is joining, tried again while its host is not in
+  std::string rejoin_code;
+  uint64_t rejoin_at = 0, rejoin_until = 0;
+} g_ygc;
+
 void yg_open(const std::string& room) {
   g_yg = true;
   g_yg_seen_host = false;
   g_yg_close_at = 0;
   g_links.clear();
   g_ping.fill(-1);
+  std::string code = room;
   if (room.empty()) {
     open_room();
+    if (yg_by_code()) {
+      const std::string mine = yougame::identity().code;
+      if (!mine.empty()) code = arena_by_code_room(mine);
+    }
   } else {
     g_active = true; g_hosting = false; g_room = Room{}; g_self = kNone;
     event("joining the arena %s", room.c_str());
   }
-  yougame::arena_room::open(room);
+  yougame::arena_room::open(code);
+}
+
+void yg_join_code(const std::string& other) {
+  const std::string room = arena_by_code_room(other);
+  if (g_active) leave_room();
+  g_ygc.adding.clear();
+  g_ygc.rejoin = room; g_ygc.rejoin_code = other;
+  g_ygc.rejoin_at = 0; g_ygc.rejoin_until = now_ms() + 90000;
+  event("joining %s's arena by code", other.c_str());
+  yg_open(room);
+}
+
+// Each frame under YouGame by code: a lone host's wait for the code it added, and a join whose host is not in yet.
+void yg_by_code_tick() {
+  const uint64_t now = now_ms();
+  if (!g_ygc.adding.empty()) {
+    if (!g_active || !g_hosting || people(g_room) > 1) g_ygc.adding.clear();
+    else if (now - g_ygc.adding_since > 60000) {
+      const std::string other = g_ygc.adding;
+      event("%s has not come in: joining their room", other.c_str());
+      yg_join_code(other);
+    }
+  }
+  if (g_ygc.rejoin.empty()) return;
+  if (g_active && !g_hosting && g_yg_seen_host) { g_ygc.rejoin.clear(); return; }   // in the friend's room
+  if (now > g_ygc.rejoin_until) {
+    event("%s's arena never opened", g_ygc.rejoin_code.c_str());
+    g_notice = g_ygc.rejoin_code + "'s room is not open. They add your code to start one.";
+    g_notice_until = now + 8000;
+    g_ygc.rejoin.clear();
+    return;
+  }
+  if (!g_active && g_ygc.rejoin_at && now >= g_ygc.rejoin_at) {
+    g_ygc.rejoin_at = 0;
+    yg_open(g_ygc.rejoin);
+  }
 }
 
 // The room's own acts under YouGame; true when handled.
@@ -1143,6 +1198,31 @@ bool yg_act(const Pending& p) {
   }
   if (p.a == Act::OpenRoom) {
     if (!g_active && yg_identity()) yg_open({});
+    return true;
+  }
+  if (p.a == Act::AddCode && !p.text.empty() && yg_by_code()) {
+    // No YouGame app: the friend's connect code, as on Slippi (yg_by_code).
+    if (!yg_identity()) return true;
+    const std::string mine = yougame::identity().code;
+    std::string other = p.text;
+    for (char& c : other) c = (char)std::toupper((unsigned char)c);
+    if (other == mine) return true;
+    if (g_active && !g_hosting) {
+      event("only the host adds friends");
+      g_notice = "Only the room's host can add friends";
+      g_notice_until = now_ms() + 6000;
+      return true;
+    }
+    const bool alone = !g_active || people(g_room) <= 1;
+    if (alone && !mine.empty() && other < mine) {
+      yg_join_code(other);
+      return true;
+    }
+    if (!g_active) yg_open({});
+    if (alone) { g_ygc.adding = other; g_ygc.adding_since = now_ms(); }
+    event("adding %s: they add %s to come in", other.c_str(), mine.c_str());
+    g_notice = "Waiting for " + other + ". They add your code " + mine;
+    g_notice_until = now_ms() + 10000;
     return true;
   }
   if (p.a == Act::AddCode) {
@@ -1360,6 +1440,14 @@ void service_yg_links() {
   }
   const std::string me = ar::me(), host = ar::host();
   if (me.empty() || host.empty()) return;   // the room's welcome is on its way
+  if (!g_hosting && host == me && !g_yg_seen_host && !g_ygc.rejoin.empty()) {
+    // By code, first into a friend's room: their game has not opened it yet. Out again, and in once more in 3 s
+    // (yg_by_code_tick), so the room is theirs when they come.
+    room_over_here("the friend's arena is not open yet: trying again", false);
+    g_ygc.rejoin_at = now + 3000;
+    g_status = "Waiting for " + g_ygc.rejoin_code;
+    return;
+  }
   const std::vector<ar::Seat> seats = ar::roster();
   const auto seat_of = [&seats](const std::string& conn) -> const ar::Seat* {
     for (const ar::Seat& s : seats) if (s.conn == conn) return &s;
@@ -1575,7 +1663,14 @@ std::shared_ptr<yougame::lobby::Plan> make_plan(std::string* why) {
   }
   st.frozen = {{"match", st.match_id}, {"seed", seed}, {"stage", st.stage}, {"teams", st.rules.teams}, {"ports", ports}};
   auto plan = std::make_shared<lb::Plan>(lb::plan(st, g_code));
-  if (!plan->ok) { if (why) *why = plan->why; return nullptr; }
+  if (!plan->ok) {
+    if (why) {
+      *why = plan->why + " (this player " + g_code + "; seats";
+      for (const auto& x : st.seats) *why += " " + x.id;
+      *why += ")";
+    }
+    return nullptr;
+  }
   plan->code_match = true;
   return plan;
 }
@@ -1849,7 +1944,7 @@ void steer_match() {
   if (g_mesh_peer && !st.active && !searching) mesh_clear_peer();   // the mesh's match is over
   Target t;
   const bool have_target = target(t);
-  if (have_target && ring_has_bots() && !g_yg) {
+  if (have_target && ring_has_bots()) {   // Slippi (Direct pairings) and YouGame (the arena's room) alike
     // A ring with Pro AIs plays the room's frozen setup over Direct pairings (the setup decides teams
     // and stage). Rebuilt for every game (a rematch on the same connection too: a new seed and stage),
     // and whenever the ring or a Pro AI's character changes.
@@ -1865,6 +1960,8 @@ void steer_match() {
       auto plan = make_plan(&why);
       if (!plan) {
         clear_plan();
+        static std::string logged;
+        if (why != logged) { logged = why; event("Pro AI setup refused: %.300s", why.c_str()); }
         g_status = "Pro AI match: " + why;
         g_next_match_ms = now_ms() + 2000;
         return;
@@ -1994,9 +2091,10 @@ void steer_match() {
   bool started;
   if (g_yg) {
     // The arena's room carries the game: its fighters are found by their YouGame ids, in ring order.
+    // A Pro AI is no seat in the room: it plays on its owner's machine (the setup, make_plan), so only people.
     std::vector<std::string> ring_ids;
     for (int s = 0; s < ring_size(g_room); ++s)
-      if (const Member* m = find(g_room, g_room.ring[s])) ring_ids.push_back(m->code);
+      if (const Member* m = find(g_room, g_room.ring[s])) if (!is_bot(*m)) ring_ids.push_back(m->code);
     started = online::arena_start_yg_search(t.mode, ring_ids, t.code, locked, g_test.character, 0, t.team, t.ffa, &error);
     if (started && locked) g_test_lock_key = lock_key;
   } else {
@@ -2069,6 +2167,11 @@ void run_test_plan() {
       const std::string who = dash_at == std::string::npos ? p.arg : p.arg.substr(0, dash_at);
       const std::string code = who.find('#') != std::string::npos ? who : "ARENA#" + std::to_string(std::atoi(who.c_str()));
       for (const Member& m : g_room.members) if (m.code == code) bot_owner = m.id;
+      // host / guest: this game's player, or the first other person (a YouGame room's members carry player ids).
+      if (who == "host") bot_owner = g_self;
+      if (who == "guest")
+        for (const Member& m : g_room.members)
+          if (m.id != g_self && m.bot_of == kNone) { bot_owner = m.id; break; }
       if (bot_owner == kNone) return;   // that member is not in yet
     }
     bool ok = false;
@@ -2265,6 +2368,7 @@ void tick() {
   if (!rooms_enabled()) return;   // tests only: rooms off
   test_add_codes();
   direct_pro_ai_tick();
+  if (yougame::session() && yg_by_code()) yg_by_code_tick();
   test_leave();
   stray_room_hello();
   {

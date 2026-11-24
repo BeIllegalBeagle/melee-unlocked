@@ -2241,6 +2241,29 @@ static void mu_f4_sync_mode(CSSData* css, int mine)
 }
 
 /* Once a frame (mu_css_state_frame, after the doubles frame), and at the end of OnEnter. */
+#include <mu_test_env.h>
+/* Tests only (MELEE_TEST_F4_PARTNER=N): the host's partner tab is pressed N times in the Doubles home, as A on
+ * it does (2 = Pro AI Fox, 3 = Pro AI Falco...), one press a second once the room is known. */
+static void mu_f4_test_partner(int mine)
+{
+    static int left = -1, wait = 120;
+    const char* v;
+    if (left == 0 || mine != 0 || !mu_f4_doubles() || !mu_f4_host()) return;
+    if (left < 0) {
+        v = mu_test_getenv("MELEE_TEST_F4_PARTNER");
+        left = (v != NULL && v[0] >= '1' && v[0] <= '9') ? v[0] - '0' : 0;
+        if (left) OSReport("doubles: test, the partner tab is pressed %d times\n", left);
+        return;
+    }
+    if (--wait > 0) return;
+    wait = 60;
+    {
+        const int want = mu_lobby_partner_want(), pro = mu_lobby_partner_pro();
+        mu_friends4_partner_cycle(1);
+        if (mu_lobby_partner_want() != want || mu_lobby_partner_pro() != pro) --left;   /* a locked tab: again */
+    }
+}
+
 static void mu_friends4_css_frame(void)
 {
     CSSData* css = mnCharSel_804D6CB0;
@@ -2295,6 +2318,7 @@ static void mu_friends4_css_frame(void)
         else mu_f4.partner_sent[0] = 0xFF;
         mu_f4_doors(css, mine);        /* the view first: the host's doors then see what the room has */
         mu_f4_partner_sync(css, mine);
+        mu_f4_test_partner(mine);
         mu_f4_pair_paint(css, mine);
         mu_f4_host_doors(css, mine);
         mu_f4_rules(css);

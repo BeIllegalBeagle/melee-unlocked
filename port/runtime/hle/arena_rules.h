@@ -21,7 +21,9 @@ constexpr int kMaxMembers = 16;
 // rooms ship with the size that real games proved.
 constexpr int kRoomLimit = 8;
 constexpr uint8_t kNone = 0xFF;
-constexpr size_t kMaxCode = 10, kMaxName = 31;
+// A Slippi connect code: 10 at most, upper case. A YouGame room's members are YouGame player ids (no '#'), kept
+// whole and as they are, up to kMaxId: the room's games find each fighter by that id (11-24 production).
+constexpr size_t kMaxCode = 10, kMaxId = 40, kMaxName = 31;
 constexpr int kRingMax = 4;
 constexpr int kFfaMin = 3;   // a free-for-all needs this many fighters
 
@@ -172,5 +174,9 @@ int feed_hops(const Room& room, uint8_t id, int fanout = 3);   // 0 for a fighte
 // edge. Each pair is (lower id, higher id), sorted, no duplicates. Room messages travel the same
 // links (each member passes a newer room on), which keeps everyone reachable.
 std::vector<std::pair<uint8_t, uint8_t>> wanted_links(const Room& room, int fanout = 3);
+
+// YouGame with no app (launcher only): a host's arena room is named by its connect code, so friends join by code.
+// 12 of [a-z0-9] (the ticket route takes 6 to 12): "mu" and ten base-36 digits of the code's hash, case ignored.
+std::string arena_by_code_room(const std::string& connect_code);
 
 }  // namespace slippi::arena

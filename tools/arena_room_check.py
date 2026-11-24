@@ -410,7 +410,14 @@ def check(args, out):
     if watchers and viewed == 0 and lived == 0:
         problems.append("no viewer or live recording to compare")
     if watchers and not args.no_viewer and viewed == 0:
-        problems.append("no viewer recording to compare")
+        # From c7c2e3c2 (11-23) a viewer saves a replay only after a takeover, so a watcher leaves no copy: its
+        # window must still have shown the games (caught up with the live feed, the feed itself compared above).
+        caught = sum(len(re.findall(r"caught up with the live game", f.read_text(errors="replace")))
+                     for i in range(args.players) for f in (out / f"m{i}" / "user" / "arena").glob("live-*.log"))
+        if caught == 0:
+            problems.append("no viewer showed a game (no viewer caught up with the live feed)")
+        else:
+            print(f"{caught} viewer windows caught up with the live feed (viewers save no copy since c7c2e3c2)")
     (out / "result.json").write_text(json.dumps({"problems": problems, "ended": ended, "fought": sorted(fought),
                                                  "viewed": viewed}, indent=2))
     for p in problems:
