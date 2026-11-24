@@ -2010,7 +2010,8 @@ void draw_intro(ImDrawList* dl, const Frame& f) {
 
 // While closed, the gold look keeps the search on screen as one lit bar at the top right.
 void draw_bars_closed(ImDrawList* dl, const Frame& f) {
-  if (!f.search.searching) return;
+  // The searching banner at the top carries the search (owner 11-24: not this old bar as well).
+  if (!f.search.searching || f.time - g_banner_drawn < 0.5) return;
   const float u = (f.game_y1 - f.game_y0) / 720.0f * 0.82f;
   const float h = 50.0f * u, right = f.game_x1 - 24.0f * u, top = f.game_y0 + 26.0f * u;
   const std::string v = f.search.elapsed;
@@ -2319,7 +2320,8 @@ float draw_strip_line(ImDrawList* dl, const Frame& f, float u, float a) {
     if (!tech.empty()) tech[0] = (char)std::tolower((unsigned char)tech[0]);
     parts.push_back({"Tech " + tech, IM_COL32(255, 255, 255, 255)});
   }
-  if (f.search.searching) parts.push_back({f.search.mode + " " + f.search.elapsed, IM_COL32(93, 240, 138, 255)});
+  if (f.search.searching && f.time - g_banner_drawn >= 0.5)
+    parts.push_back({f.search.mode + " " + f.search.elapsed, IM_COL32(93, 240, 138, 255)});
   }
   const float px = 16 * u, h = 40 * u, sep = 24 * u;
   float w = 34 * u;

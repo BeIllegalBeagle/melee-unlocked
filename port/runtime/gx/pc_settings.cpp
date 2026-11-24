@@ -4661,7 +4661,29 @@ static void draw_search_keep(RenderOptions& options, const slippi::native_practi
   static practice_menu::SearchBanner last;
   static double gone_at = -1.0;
   const double now = ImGui::GetTime();
-  if (k.stage == 1 || k.stage == 2) {
+  // A search started from Training's own menu shows the same banner (owner 11-24: the default banner at
+  // the top, not the menu look's old bar).
+  static double training_search_since = -1.0;
+  const bool training_search = k.stage == 0 && practice.phase == slippi::native_practice::Phase::Searching;
+  if (!training_search) training_search_since = -1.0;
+  else if (training_search_since < 0.0) training_search_since = now;
+  if (training_search) {
+    using slippi::native_practice::MatchMode;
+    practice_menu::SearchBanner b;
+    b.stage = 1;
+    b.service = yougame::session() ? "YouGame" : "Slippi";
+    b.mode = practice.mode == MatchMode::Direct ? (yougame::session() ? "Friends" : "Direct")
+           : practice.mode == MatchMode::Teams ? "Teams" : "Unranked";
+    b.elapsed_ms = (uint32_t)((uint64_t)practice.search_ticks * 1000 / 60);
+    b.shown_ms = (uint32_t)((now - training_search_since) * 1000.0);
+    b.clock_ms = (uint32_t)(now * 1000.0);
+    b.look = std::clamp(RenderOptions::live_search_banner(), 0, practice_menu::kSearchBannerLooks - 1);
+    b.scene_major = practice.scene_major;
+    b.scene_minor = practice.scene_minor;
+    last = b;
+    gone_at = -1.0;
+    practice_menu::draw_search_banner(b, screen.x, screen.y, x0, y0, x1, y1);
+  } else if (k.stage == 1 || k.stage == 2) {
     practice_menu::SearchBanner b;
     b.stage = k.stage;
     b.service = k.service;
