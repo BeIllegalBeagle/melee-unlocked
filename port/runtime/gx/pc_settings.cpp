@@ -10608,9 +10608,9 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
         }
         if (ImGui::IsItemHovered())
           ImGui::SetTooltip("When this port is a CPU in VS Mode, the pro plays it instead of the game's CPU.\n"
-                            "Each pro plays the characters its AI knows (Zain: Marth, Cody: Fox, Mang0: Falco,\n"
-                            "aMSa: Yoshi); other characters stay the game's CPU. Two CPU ports set to pros fight\n"
-                            "each other. Offline VS only: never online, in Unranked or Ranked.");
+                            "Each pro plays the character shown beside its name; other characters stay the game's\n"
+                            "CPU. Two CPU ports set to pros fight each other. Offline VS only: never online, in\n"
+                            "Unranked or Ranked.");
       }
     }
     if (settings_toggle("Show results screen", &options.results_screen)) {

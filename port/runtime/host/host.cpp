@@ -3825,7 +3825,7 @@ void retrace() {
     // MELEE_TEST_CLOSE_STUCK=<retrace> (tests only): the window is closed at that retrace and the game
     // thread then hangs, as a stuck game does; the process must still end (request_user_exit).
     static const uint32_t close_stuck = [] {
-      const char* v = test_env::getenv("MELEE_TEST_CLOSE_STUCK");
+      const char* v = host::test_env::getenv("MELEE_TEST_CLOSE_STUCK");
       return v ? (uint32_t)std::strtoul(v, nullptr, 10) : 0u;
     }();
     if (close_stuck && g_retraces >= close_stuck) {
