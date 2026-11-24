@@ -2517,8 +2517,7 @@ void load_pc_settings(RenderOptions& options, int& volume) {
       // so a new key lets every player start from today's default (off; on for agent runs) once.
       else if (key == "showfps_yougame2") saved_showfps_yougame = value == "1";
       else if (key == "showvram") options.show_vram = value == "1";
-      else if (key == "showping") options.show_ping = value == "1";
-      else if (key == "liveping") options.live_ping = value == "1";
+      else if (key == "showping" || key == "liveping") (key == "showping" ? options.show_ping : options.live_ping) = value == "1";
       else if (key == "netoverlay") net_overlay::set_enabled(value == "1");
       // Diagnostic, off unless someone is hunting a one-frame glitch: see RenderOptions::flicker_scan.
       // Settings-file only rather than a control in the panel, because it costs a readback on every
