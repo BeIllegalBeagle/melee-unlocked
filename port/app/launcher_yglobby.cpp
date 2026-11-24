@@ -1248,8 +1248,11 @@ LRESULT CALLBACK proc(HWND w, UINT m, WPARAM wp, LPARAM lp) {
     }
     case WM_MOUSELEAVE: g_tracking = false; if (g_hot >= 0) { g_hot = -1; g_hot_act = -1; InvalidateRect(w, nullptr, FALSE); } return 0;
     case WM_SETCURSOR:
-      if (LOWORD(lp) == HTCLIENT && launcher::pad::hand_shown()) { SetCursor(nullptr); return TRUE; }
-      if (LOWORD(lp) == HTCLIENT) if (HCURSOR h = launcher::melee_look::hand_now(g_hot >= 0, HIWORD(lp))) { SetCursor(h); return TRUE; }
+      if (LOWORD(lp) == HTCLIENT) {
+        const HCURSOR h = launcher::melee_look::hand_now(g_hot >= 0, HIWORD(lp));
+        if (launcher::pad::hand_shown()) { SetCursor(nullptr); return TRUE; }   // one hand: the controller's
+        if (h) { SetCursor(h); return TRUE; }
+      }
       if (LOWORD(lp) == HTCLIENT && g_hot >= 0) { SetCursor(LoadCursorW(nullptr, IDC_HAND)); return TRUE; } break;
     case WM_LBUTTONDOWN: {
       POINT p{(short)LOWORD(lp), (short)HIWORD(lp)};

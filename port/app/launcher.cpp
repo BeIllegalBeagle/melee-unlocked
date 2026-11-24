@@ -1720,6 +1720,7 @@ void select_tab(int idx) {
   if (idx != 2) launcher::lobby::hide();
   if (idx != 2) launcher::yglobby::hide();
   const bool skin_full = launcher::skin::shown() && !launcher::skin::is_compact();
+  if (previous != idx) log_line("page: %d -> %d%s", previous, idx, launcher::skin::shown() ? (skin_full ? " (Brawl Online look)" : " (beside its sidebar)") : "");   // what opened which page
   if (g_main && previous != idx) {
     set_resizable(false);
     RECT size{0,0,S(idx==2?LOBBY_W:(idx==3?REPLAY_W:(idx==4?MODS_W:WIN_W))),S(idx==2?LOBBY_H:(idx==3?REPLAY_H:(idx==4?MODS_H:WIN_H)))};
@@ -1773,6 +1774,7 @@ void build_thread() {
 }
 
 void start_build() {
+  log_line("build: started (page %d)", g_tab);
   if (g_building || g_iso.empty()) return;
   g_building = true;
   EnableWindow(g_build_btn, FALSE); EnableWindow(g_play_btn, FALSE);
@@ -2049,7 +2051,8 @@ bool game_exe_version_mismatch(const std::string& exe) {
 bool test_scripted() { return g_launcher_test && std::getenv("MELEE_LAUNCHER_TEST_SCRIPT"); }
 void test_action(const char* what) { if (FILE* f = std::fopen("launcher-actions.log", "ab")) { std::fprintf(f, "%s\n", what); std::fclose(f); } }
 void start_game() {
-  if (test_scripted()) { test_action("start_game"); return; }
+  if (test_scripted()) {   // test runs: what Play would start, logged instead of started
+    const std::string exe = game_exe(); test_action(("start_game " + exe.substr(exe.find_last_of("\/") + 1) + (file_exists(exe) ? " (there)" : " (missing: would open Build)")).c_str()); return; }
   if (g_playing || g_iso.empty()) return;
   if (yougame_sign_in_for_play()) return;   // the launcher's own sign-in first, once; the game starts when it closes
   if (const std::wstring problem = base_disc_problem(g_iso); !problem.empty()) {
@@ -2747,6 +2750,9 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_APP + 41: place_play_children(); capture_test_client(hwnd, "launcher-capture.bmp"); return 0;
     case WM_APP + 73: { std::unique_ptr<std::string> name((std::string*)lp); capture_test_client(hwnd, name->c_str()); return 0; }   // script: capture
     case WM_APP + 74: apply_look((int)wp); return 0;   // script: look
+    case WM_APP + 90:   // the settings window left nothing in front: the launcher again (the controller drives it)
+      if (!IsIconic(hwnd)) { SetForegroundWindow(hwnd); BringWindowToTop(hwnd); }
+      return 0;
     case WM_APP + 70: select_tab(2); launcher::yglobby::open(); return 0;   // MELEE_LAUNCHER_TEST_PAGE=lobby
     case WM_APP + 71: show_skin(); return 0;   // the launcher opens in the Brawl Online look
     case WM_SIZE:
@@ -2794,11 +2800,12 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
       if (g_nav_hot >= 0) { int was = g_nav_hot; g_nav_hot = -1; invalidate(nav_rect(was)); }
       return 0;
     case WM_SETCURSOR:
-      if (LOWORD(lp) == HTCLIENT && launcher::pad::hand_shown()) { SetCursor(nullptr); return TRUE; }   // the controller's hand is the pointer
       if (LOWORD(lp) == HTCLIENT) {   // Melee's hand in the Melee looks: open over a button, grabbing while pressed
         wchar_t cls[16] = {}; GetClassNameW((HWND)wp, cls, 15);
         const bool over = (HWND)wp != hwnd && _wcsicmp(cls, L"Button") == 0 && IsWindowEnabled((HWND)wp);
-        if (HCURSOR h = launcher::melee_look::hand_now(over || g_nav_hot >= 0, HIWORD(lp))) { SetCursor(h); return TRUE; }
+        const HCURSOR h = launcher::melee_look::hand_now(over || g_nav_hot >= 0 || g_seg_hot >= 0 || g_dog_hot || g_yg_hot, HIWORD(lp));
+        if (launcher::pad::hand_shown()) { SetCursor(nullptr); return TRUE; }   // the controller's hand is the pointer: one hand
+        if (h) { SetCursor(h); return TRUE; }
       }
       if (LOWORD(lp) == HTCLIENT && (g_nav_hot >= 0 || g_seg_hot >= 0 || g_dog_hot || g_yg_hot)) { SetCursor(LoadCursorW(nullptr, IDC_HAND)); return TRUE; }
       break;
@@ -3367,6 +3374,22 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int show) {
                                 else if (part == 3) choose_version();
                                 else if (part == 4) PostMessageW(g_main, WM_COMMAND, ID_UPDATE, 0);
                                 else if (part == 5) PostMessageW(g_main, WM_COMMAND, ID_LANGUAGE, 0);
+                              },
+                              [] {   // the game build Play Melee starts (as the Game page's GAME BUILD row shows it)
+                                const int on = g_engine == ENGINE_SOURCE && source_available() ? (g_vanilla.vanilla && vanilla_supported() ? 2 : 0) : 1;
+                                return launcher::lang::txw(on == 0 ? L"Source Port" : on == 1 ? L"Static Recomp (Legacy)" : L"Vanilla");
+                              },
+                              [] {   // pick another
+                                const int on = g_engine == ENGINE_SOURCE && source_available() ? (g_vanilla.vanilla && vanilla_supported() ? 2 : 0) : 1;
+                                const bool have[3] = {source_available(), recomp_available(), source_available() && vanilla_supported()};
+                                const wchar_t* names[3] = {L"Source Port", L"Static Recomp (Legacy)", L"Vanilla"};
+                                HMENU m = CreatePopupMenu();
+                                AppendMenuW(m, MF_STRING | MF_GRAYED, 0, launcher::lang::txw(L"Game build").c_str());
+                                for (int i = 0; i < 3; ++i) AppendMenuW(m, MF_STRING | (i == on ? MF_CHECKED : 0) | (have[i] ? 0 : MF_GRAYED), 1 + i,
+                                  (launcher::lang::txw(names[i]) + (have[i] ? L"" : L"  (not installed)")).c_str());
+                                POINT p{}; GetCursorPos(&p);
+                                const int pick = TrackPopupMenu(m, TPM_RETURNCMD | TPM_RIGHTBUTTON, p.x, p.y, 0, g_main, nullptr); DestroyMenu(m);
+                                if (pick >= 1 && pick <= 3 && pick - 1 != on) { select_build(pick - 1); save_ini(); InvalidateRect(g_main, nullptr, FALSE); }
                               }});
   if (launcher::melee_look::look() == launcher::melee_look::kBrawlOnline) PostMessageW(hwnd, WM_APP + 71, 0, 0);   // open in that look
   launcher::skin::set_color(g_skin_color);   // Melee blue until the player picks one in this look

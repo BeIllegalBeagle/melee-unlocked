@@ -7,6 +7,7 @@
 #define NOMINMAX
 #endif
 #include "launcher_skin.h"
+#include "launcher_pad.h"
 #include <commctrl.h>
 #include <objidl.h>
 #include <gdiplus.h>
@@ -47,7 +48,7 @@ bool g_tracking = false;
 std::wstring g_toast; ULONGLONG g_toast_until = 0;
 ULONG_PTR g_gdiplus = 0;
 
-enum Act { A_PLAYER_MENU, A_ADD_TYPED, A_SIGN_IN, A_STATUS, A_RAIL_ART, A_WATCH_PLAYER, A_NAV, A_PLAY_OFFLINE, A_QUEUE, A_JOIN_CODE, A_CREATE, A_ROOM, A_WATCH, A_RAIL_TAB, A_ELO, A_TOOL, A_ME, A_MY_MAIN };
+enum Act { A_BUILD_MENU, A_PLAYER_MENU, A_ADD_TYPED, A_SIGN_IN, A_STATUS, A_RAIL_ART, A_WATCH_PLAYER, A_NAV, A_PLAY_OFFLINE, A_QUEUE, A_JOIN_CODE, A_CREATE, A_ROOM, A_WATCH, A_RAIL_TAB, A_ELO, A_TOOL, A_ME, A_MY_MAIN };
 struct Hit { RECT r; int act, arg; };
 std::vector<Hit> g_hits;
 
@@ -327,7 +328,8 @@ void play_page(HDC dc, const launcher::yglobby::Data& d, double bottom) {
     const double tx0 = 244 + mw(dc, L"Play", 46) * 96.0 / dpi() + 14;
     dot(dc, tx0 + 3.5, 45, 7, kOk); tx(dc, std::to_wstring(d.online) + (d.online == 1 ? L" player in-game" : L" players in-game"), tx0 + 13, 36.5, g_f13, P.text2);
   }
-  { const double w = mw(dc, L"Play offline", 20) * 96.0 / dpi() + 32; frame_button(dc, 964 - w, 25, w, 34, L"Play offline", 20, A_PLAY_OFFLINE); }
+  // The main way in: Melee itself (every mode, online too, from its own menus), as big as the page's heading.
+  { const double w = std::max(190.0, mw(dc, L"Play Melee", 26) * 96.0 / dpi() + 48); frame_button(dc, 964 - w, 20, w, 44, L"Play Melee", 26, A_PLAY_OFFLINE); }
   // the queues and your rank
   fill_box(dc, 244, 80, 720, 130, 10, P.raised);
   const wchar_t* q[3] = {L"Play unranked", L"Play ranked", L"Play 2v2"};
@@ -659,6 +661,7 @@ void act(int a, int arg) {
     case A_ME: launcher::yglobby::open_yougame_page(); return;
     case A_RAIL_ART: if (g_cb.rail_picture) g_cb.rail_picture(); return;
     case A_STATUS: if (g_cb.status_click) g_cb.status_click(arg); return;
+    case A_BUILD_MENU: if (g_cb.build_menu) g_cb.build_menu(); break;
     case A_PLAYER_MENU: if (arg >= 0 && arg < (int)d.players.size()) {
         const auto& pl = d.players[arg]; const std::string user(pl.code.begin(), pl.code.end());
         HMENU m = CreatePopupMenu();
@@ -723,7 +726,12 @@ LRESULT CALLBACK proc(HWND w, UINT m, WPARAM wp, LPARAM lp) {
     }
     case WM_MOUSELEAVE: g_tracking = false; if (g_hot >= 0) { g_hot = -1; g_hot_act = -1; InvalidateRect(w, nullptr, FALSE); } return 0;
     case WM_SETCURSOR:
-      if (LOWORD(lp) == HTCLIENT) { if (HCURSOR h = launcher::melee_look::hand_now(g_hot >= 0, HIWORD(lp))) { SetCursor(h); return TRUE; } if (g_hot >= 0) { SetCursor(LoadCursorW(nullptr, IDC_HAND)); return TRUE; } }
+      if (LOWORD(lp) == HTCLIENT) {
+        const HCURSOR h = launcher::melee_look::hand_now(g_hot >= 0, HIWORD(lp));
+        if (launcher::pad::hand_shown()) { SetCursor(nullptr); return TRUE; }   // one hand: the controller's
+        if (h) { SetCursor(h); return TRUE; }
+        if (g_hot >= 0) { SetCursor(LoadCursorW(nullptr, IDC_HAND)); return TRUE; }
+      }
       break;
     case WM_LBUTTONDOWN: {
       POINT p{(short)LOWORD(lp), (short)HIWORD(lp)};
@@ -811,7 +819,7 @@ void button(HDC dc, HWND w, RECT r, const std::wstring& label, bool accent, bool
   const COLORREF bot = accent && !disabled ? P.accent2 : down ? P.page : P.raised;
   const COLORREF rim = accent && !disabled ? P.rim : disabled ? P.soft_page : P.line_strong;
   if (!launcher::melee_look::button(dc, r, top, bot, rim, true)) { fill_box(dc, x, y, bw, bh, 6, top); if (!accent || disabled) line_box(dc, x, y, bw, bh, 6, rim); }
-  const double pad = std::min(14.0, bw * 0.12), n = std::min(accent ? 36.0 : 19.0, bh * 0.6);
+  const double pad = std::min(10.0, bw * 0.05), n = std::min(accent ? 36.0 : 20.0, bh * 0.68);   // small buttons: bigger label, less side room
   mt(dc, label, x + pad, y + (bh - n * 0.78) / 2, n, disabled ? P.dim : accent ? RGB(255, 255, 255) : P.text, bw - 2 * pad, 0, DT_CENTER);
 }
 void set_rail_art(HBITMAP bitmap, int w, int h) { g_art = bitmap; g_art_w = w; g_art_h = h; if (g_window) InvalidateRect(g_window, nullptr, FALSE); }
