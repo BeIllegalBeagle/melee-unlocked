@@ -673,6 +673,13 @@ bool resume_web(std::string* why) {
   return true;
 }
 
+// A read with the launcher's own YouGame sign-in (its web view), for the Multiplayer Lobby page. Never throws.
+int site_get(const std::string& path, std::string* body) {
+  try { const Reply r = site("GET", path, ""); if (body) *body = r.body; return r.status; } catch (...) { return 0; }
+}
+bool staging_env() { std::lock_guard<std::mutex> lock(g_mutex); return g_env.id == "staging"; }
+std::string site_url() { std::lock_guard<std::mutex> lock(g_mutex); return g_env.site; }
+
 AppSignIn sign_in_app(bool may_start, const std::string& version, std::string* detail) {
   // Every step goes into *detail ("; " between), for the launcher's log.
   std::string steps;
