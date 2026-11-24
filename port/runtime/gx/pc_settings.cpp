@@ -4672,8 +4672,8 @@ static void draw_search_keep(RenderOptions& options, const slippi::native_practi
     practice_menu::SearchBanner b;
     b.stage = 1;
     b.service = yougame::session() ? "YouGame" : "Slippi";
-    b.mode = practice.mode == MatchMode::Direct ? (yougame::session() ? "Friends" : "Direct")
-           : practice.mode == MatchMode::Teams ? "Teams" : "Unranked";
+    b.mode = practice.mode == MatchMode::Direct && yougame::session() ? std::string("Friends")
+                                                                        : std::string(slippi::native_practice::match_mode_name(practice.mode));
     b.elapsed_ms = (uint32_t)((uint64_t)practice.search_ticks * 1000 / 60);
     b.shown_ms = (uint32_t)((now - training_search_since) * 1000.0);
     b.clock_ms = (uint32_t)(now * 1000.0);
