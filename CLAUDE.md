@@ -13,7 +13,10 @@ game, kept on the `mac-build` branch. Everything else follows upstream.
   For any `gh` command on this repo, select the account explicitly:
   `GH_TOKEN="$(gh auth token --user BeIllegalBeagle)" gh pr create ...`
 - To pick up a new upstream version: `git fetch upstream`, merge `upstream/main` into `mac-build`, then
-  rebuild.
+  rebuild both apps and run the checks under Testing (release parity and the cross-architecture
+  pairings). `tools/prepare_native_sources.py` brings the prepared decomp up to date with a changed
+  `melee-native.patch` by rewriting only the files that changed. It compares the tree with the one it
+  recorded as `refs/mu/prepared` in the submodule, and stops if the tree has edits of its own.
 
 ## Building the Mac app
 

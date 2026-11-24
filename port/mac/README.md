@@ -13,7 +13,11 @@ port/mac/build_all.sh path/to/melee.iso              # x86-64 app, runs under Ro
 `build_deps.sh` builds SDL2, glslang, SPIRV-Cross and static libusb (all universal)
 and downloads messense's GCC 15.2 cross compilers for x86-64 and AArch64 Linux
 (`linux-cross.cmake`). `build_all.sh` prepares `sourceport/extern/melee` (the
-released `melee-native.patch`, then `melee-native-mac.patch`), builds
+released `melee-native.patch`, then `melee-native-mac.patch`). When either
+patch has changed since, as after merging a new upstream version,
+`prepare_native_sources.py` rewrites only the files whose patched text changed.
+It records each preparation as `refs/mu/prepared` in the submodule, and a tree
+with edits of its own stops with instructions instead. `build_all.sh` then builds
 `melee_game.so` with the matching compiler and `-fno-stack-protector` (the loader
 refuses stack-canary code) and with Doubles and Squad Strike on as in the Linux
 release, recompiles the headers from the disc, then runs
