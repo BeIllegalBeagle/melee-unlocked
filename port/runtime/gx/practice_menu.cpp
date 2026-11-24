@@ -18,6 +18,7 @@
 #include "practice_ghosts.h"
 #include "ghost_ai.h"
 #include "phillip_ai.h"
+#include "settings_chord.h"
 #include "native_practice.h"
 #include "render_options.h"
 #include "slippi_online.h"
@@ -2017,7 +2018,7 @@ void draw_bars_closed(ImDrawList* dl, const Frame& f) {
   draw_bar(dl, right - w, top, right, h, u, true, f.search.mode.c_str(), v, true, 1.0f, false);
   const float dot = 0.55f + 0.45f * std::sin((float)f.time * 4.0f);
   dl->AddCircleFilled(ImVec2(right - 20 * u, top + h * 0.5f), 5.5f * u, IM_COL32(40, 170, 70, (int)(255 * dot)), 16);
-  const std::string sub = f.search.opponent.empty() ? std::string("Start + D-pad Up + Z: menu") : "Found " + f.search.opponent;
+  const std::string sub = f.search.opponent.empty() ? host::settings_shortcut::practice_chord_name() + ": menu" : "Found " + f.search.opponent;
   text(dl, right - w + 4 * u, top + h + 6 * u, 15 * u, IM_COL32(230, 232, 240, 230), sub.c_str());
 }
 

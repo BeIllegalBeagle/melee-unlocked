@@ -113,6 +113,7 @@ static bool arena_capture() { return false; }
 static uint16_t arena_withheld() { return 0; }
 #endif
 #include "practice_menu.h"
+#include "settings_chord.h"
 // Lab view: the release ships its silhouette packs in Lab\ (tools/build_lab_assets.py), on both engines.
 constexpr bool kLabViewAvailable = true;
 #ifndef MELEE_PORT_VERSION
@@ -2534,6 +2535,10 @@ void load_pc_settings(RenderOptions& options, int& volume) {
       else if (key == "damagehudscale") options.damage_hud_scale = std::clamp(std::atoi(value.c_str()), 75, 175);
       else if (key == "playernicknames") options.show_player_nicknames = value == "1";
       else if (key == "matchmakinghint") options.matchmaking_hint = value != "0";
+      else if (key == "practicechord") {
+        const int chord = (int)std::strtol(value.c_str(), nullptr, 16);
+        if (host::settings_shortcut::valid_practice_chord((uint16_t)chord)) options.practice_chord = chord;
+      }
       else if (key == "practiceopens") options.practice_opens = std::clamp(std::atoi(value.c_str()), 0, 99);
       else if (key == "practicestyle") { const int n = std::atoi(value.c_str()); if (n >= 0 && n < practice_menu::kStyleCount) options.practice_style = n; }
       else if (key == "effects") { int n = std::atoi(value.c_str()); if (n >= 0 && n <= 3) options.effects_level = n; }
@@ -2909,6 +2914,7 @@ void load_pc_settings(RenderOptions& options, int& volume) {
   host::g_hide_hud_emblems.store(options.hide_hud_emblems, std::memory_order_relaxed);
   host::g_community_codes.store(options.community_codes, std::memory_order_relaxed);
   phillip_ai::set_stronger_choice(options.pro_ai_stronger);
+  host::settings_shortcut::practice_chord().store((uint16_t)options.practice_chord, std::memory_order_relaxed);
   phillip_ai::set_extra_delay(options.pro_ai_extra_delay);
   RenderOptions::live_unlock_all() = options.unlock_all;
   RenderOptions::live_zelda_as_sheik() = options.zelda_as_sheik;
@@ -4842,7 +4848,7 @@ static void draw_native_practice(SettingsState& state, RenderOptions& options,
     practice_card_title(title, true);
     ImGui::TextDisabled("%s", matchmaking_state_text(practice.matchmaking_state));
     if (!practice.opponent.empty()) ImGui::TextDisabled("vs %s", practice.opponent.c_str());
-    ImGui::TextDisabled("Keep practicing. Tab or Start + D-pad Up + Z: search controls");
+    ImGui::TextDisabled("Keep practicing. Tab or %s: search controls", host::settings_shortcut::practice_chord_name().c_str());
     practice_card_end();
   }
 
@@ -4851,7 +4857,7 @@ static void draw_native_practice(SettingsState& state, RenderOptions& options,
       ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetTime() < 20.0 ? 1.0f : 0.5f);
       practice_card_begin("##native_practice_hint", ImVec2(screen.x - 12, 52), ImVec2(1, 0), false);
       practice_card_title("Find a match while you train", false);
-      ImGui::TextDisabled("Start + D-pad Up + Z (Tab on a keyboard), then Search");
+      ImGui::TextDisabled("%s (Tab on a keyboard), then Search", host::settings_shortcut::practice_chord_name().c_str());
       practice_card_end();
       ImGui::PopStyleVar();
     }
@@ -5266,7 +5272,7 @@ static bool write_settings_file_impl(const SettingsState& state, const RenderOpt
        << "\nstockhudscale " << options.stock_hud_scale
        << "\ndamagehudscale " << options.damage_hud_scale
        << "\nplayernicknames " << (options.show_player_nicknames ? 1 : 0)
-       << "\nmatchmakinghint " << (options.matchmaking_hint ? 1 : 0) << "\npracticestyle " << options.practice_style << "\npracticeopens " << options.practice_opens
+       << "\nmatchmakinghint " << (options.matchmaking_hint ? 1 : 0) << "\npracticestyle " << options.practice_style << "\npracticechord " << std::hex << options.practice_chord << std::dec << "\npracticeopens " << options.practice_opens
        << "\ninputoverlay " << options.input_overlay << "\ninputoverlayports " << options.input_overlay_ports
        << "\nclean_replays " << (options.clean_replays ? 1 : 0)
        << "\nlabview " << options.lab_view << "\nlabskipscene " << options.lab_skip_scene
@@ -11977,7 +11983,8 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
 #ifndef MELEE_NO_SLIPPI   // no matchmaking panel in the build without that layer
     changed |= settings_toggle("Show the Practice menu hint in Training", &options.matchmaking_hint);
     if (ImGui::IsItemHovered())
-      ImGui::SetTooltip("Start + D-pad Up + Z opens the Practice menu. The hint stops by itself once you have used it.");
+      ImGui::SetTooltip("%s opens the Practice menu. The hint stops by itself once you have used it.",
+                        host::settings_shortcut::practice_chord_name().c_str());
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Tab still opens matchmaking with it off.");
     {
       static const char* const looks[practice_menu::kStyleCount] = {
@@ -11987,8 +11994,56 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
       ImGui::SetNextItemWidth(260.0f);
       if (settings_combo("Practice menu look", &look, looks, practice_menu::kStyleCount)) { options.practice_style = look; changed = true; }
       if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("How the Practice menu (Start + D-pad Up + Z in Training) looks. All of them work with the controller;\n"
-                          "the window also works with the mouse.");
+        ImGui::SetTooltip("How the Practice menu (%s in Training) looks. All of them work with the controller;\n"
+                          "the window also works with the mouse.", host::settings_shortcut::practice_chord_name().c_str());
+    }
+    {
+      // The Practice menu's buttons, set by holding them: box controllers whose firmware makes the D-pad
+      // from other buttons could not press Start + D-pad Up + Z together (buro, 11-23).
+      namespace chord = host::settings_shortcut;
+      static int step = 0;        // 0 idle, 1 waiting for every button to be let go, 2 collecting
+      static uint16_t widest = 0;
+      static double started = 0.0;
+      static std::string note;
+      const double now = ImGui::GetTime();
+      ImGui::Text("Practice menu buttons: %s", chord::chord_name((uint16_t)options.practice_chord).c_str());
+      ImGui::SameLine();
+      if (step == 0 && settings_widgets::Button("Change##practicechord")) {
+        step = 1; widest = 0; started = now; note.clear();
+        chord::start_recording();
+      }
+      if (step == 0 && options.practice_chord != chord::kDefaultPracticeChord) {
+        ImGui::SameLine();
+        if (settings_widgets::Button("Default##practicechord")) {
+          options.practice_chord = chord::kDefaultPracticeChord;
+          chord::practice_chord().store(chord::kDefaultPracticeChord, std::memory_order_relaxed);
+          changed = true;
+        }
+      }
+      if (step != 0) {
+        const uint16_t held = chord::recorded_held().load(std::memory_order_relaxed);
+        if (step == 1 && held == 0) step = 2;
+        else if (step == 2) {
+          widest |= held;
+          if (held == 0 && widest) {
+            if (chord::valid_practice_chord(widest)) {
+              options.practice_chord = widest;
+              chord::practice_chord().store(widest, std::memory_order_relaxed);
+              changed = true;
+              note = "Set: " + chord::chord_name(widest);
+            } else {
+              note = chord::chord_name(widest) + " can't be used: hold two or more buttons that are not Start + D-pad Down + Z (settings).";
+            }
+            step = 0;
+          }
+        }
+        if (step != 0 && (now - started > 10.0 || !chord::recording_active())) { step = 0; note = "Nothing was set (10 seconds passed)."; }
+        if (step == 0) chord::recording().store(false, std::memory_order_relaxed);
+        else ImGui::TextDisabled("Hold the buttons together on your controller, then let go of all of them.");
+      }
+      if (step == 0 && !note.empty()) ImGui::TextDisabled("%s", note.c_str());
+      if (ImGui::IsItemHovered() || ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+        ImGui::SetTooltip("The buttons held together that open the Practice menu in Training.");
     }
 #endif
     changed |= settings_toggle("Performance overlay", &options.performance_overlay);

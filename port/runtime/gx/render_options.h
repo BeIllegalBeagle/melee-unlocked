@@ -105,6 +105,7 @@ struct RenderOptions {
   bool show_player_nicknames = false; // screen-space names anchored to Melee's player tags
   // The Practice menu hint in Training (saved as matchmakinghint, its old name). The menu stays available.
   bool matchmaking_hint = true;
+  int practice_chord = 0x1018;   // the Practice menu's buttons (host::settings_shortcut::practice_chord)
   // The Practice menu's look in Training (practice_menu.h: 0 Main Menu bars, 1 side rails, 2 slots,
   // 3 strip, 4 the full window).
   int practice_style = 0;
