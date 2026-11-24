@@ -189491,7 +189491,7 @@ index e03ab11ef..488225f8d 100644
      proc = HSD_GObj_SetupProc(GObj_Create(0U, 1U, 0x80U), fn_8024B2B0, 0U);
      proc->flags_3 = (u16) HSD_GObj_804D783C;
 diff --git a/src/melee/mn/mnstagesel.c b/src/melee/mn/mnstagesel.c
-index dfb2b5510..7271d7c75 100644
+index dfb2b5510..bb2db8fd5 100644
 --- a/src/melee/mn/mnstagesel.c
 +++ b/src/melee/mn/mnstagesel.c
 @@ -2,9 +2,9 @@
@@ -190829,8 +190829,23 @@ index dfb2b5510..7271d7c75 100644
              jobj = gobj->hsd_obj;
              temp_r3_16 = HSD_MemAlloc(sizeof(*temp_r3_16));
              GObj_InitUserData(gobj, 4, HSD_Free, temp_r3_16);
-@@ -765,16 +1635,35 @@ void mnStageSel_Scene_OnFrame(void)
+@@ -763,18 +1633,50 @@ static inline HSD_PadStatus* get_pad(u8 i)
+ /// OnFrame
+ void mnStageSel_Scene_OnFrame(void)
  {
++#ifdef MU_NATIVE
++    /* Tests only: MELEE_TEST_VS_STAGE for ids that do not fit force_stage_id (an s8: m-ex discs' added stages
++     * 128 and up, SUPA DIDDY BROS. check 11-24), straight to that stage here. */
++    {
++        const int test_stage = mu_test_vs_stage();
++        if (test_stage > 127) {
++            mnStageSel_804D6CAF = 2;
++            sss_data->vs.start.rules.stkind = test_stage;
++            gm_801A4B60();
++            return;
++        }
++    }
++#endif
      if (sss_data->force_stage_id >= 0) {
          mnStageSel_804D6CAF = 2;
 +#ifdef MU_NATIVE
@@ -190865,7 +190880,7 @@ index dfb2b5510..7271d7c75 100644
          gm_801A4B60();
          return;
      }
-@@ -819,15 +1708,58 @@ void mnStageSel_Scene_OnFrame(void)
+@@ -819,15 +1721,58 @@ void mnStageSel_Scene_OnFrame(void)
          mnStageSel_804D6CA4 -= 1;
          return;
      }
@@ -190924,7 +190939,7 @@ index dfb2b5510..7271d7c75 100644
          gm_801A4B60();
      }
  }
-@@ -838,6 +1770,10 @@ void mnStageSel_Scene_OnExit(UNUSED void* exit_data)
+@@ -838,6 +1783,10 @@ void mnStageSel_Scene_OnExit(UNUSED void* exit_data)
          lbArchive_80016EFC(mnStageSel_804D6C94);
          mnStageSel_804D6C94 = NULL;
      }
@@ -190935,7 +190950,7 @@ index dfb2b5510..7271d7c75 100644
      {
          SSSData* sss = sss_data;
          sss->start_game = mnStageSel_804D6CAF == 2 ? true : false;
-@@ -851,10 +1787,22 @@ void mnStageSel_Scene_OnExit(UNUSED void* exit_data)
+@@ -851,10 +1800,22 @@ void mnStageSel_Scene_OnExit(UNUSED void* exit_data)
  
  int mnSelStageRandom(void)
  {
