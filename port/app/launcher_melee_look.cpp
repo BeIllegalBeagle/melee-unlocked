@@ -7,6 +7,7 @@
 #include "launcher_melee_assets.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <list>
 #include <map>
@@ -266,9 +267,12 @@ HCURSOR hand_cursor(int pose) {
   DeleteObject(color); DeleteObject(mask);
   return cursor;
 }
+std::atomic<int> g_pose_now{0};
 HCURSOR hand_now(bool over_clickable, UINT mouse_msg) {
   const bool held = mouse_msg == WM_LBUTTONDOWN || mouse_msg == WM_LBUTTONDBLCLK || (mouse_msg != WM_LBUTTONUP && (GetKeyState(VK_LBUTTON) & 0x8000));
-  return hand_cursor(held ? 1 : over_clickable ? 2 : 0);
+  const int pose = held ? 1 : over_clickable ? 2 : 0; g_pose_now.store(pose);
+  return hand_cursor(pose);
 }
+int hand_pose_now() { return g_pose_now.load(); }
 
 }  // namespace launcher::melee_look

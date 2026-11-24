@@ -28,6 +28,7 @@ HCURSOR hand_cursor(int pose = 0);   // Melee's hand as a pointer: 0 pointing, 1
 // The hand for this moment: grabbing while the button is held (mouse_msg: the message WM_SETCURSOR names), open over
 // something clickable, otherwise pointing.
 HCURSOR hand_now(bool over_clickable, UINT mouse_msg);
+int hand_pose_now();   // the pose hand_now last picked (0 pointing, 1 grab, 2 open): the controller's hand follows it
 // Melee's font at a given cell size in pixels (the skin's own sizes); -1 / false when it cannot.
 int width_cell(const std::wstring& s, int cell);
 bool text_cell(HDC dc, const std::wstring& s, RECT r, int cell, COLORREF color, UINT fmt, double skew = 0);   // skew: degrees of slant (titles)

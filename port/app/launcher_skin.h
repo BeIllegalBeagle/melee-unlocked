@@ -20,6 +20,8 @@ struct Callbacks {
   struct Status { std::wstring slippi, yougame, mods, version, update, language; bool slippi_ok = false, yougame_ok = false, mods_on = false; };
   std::function<Status()> status;
   std::function<void(int part)> status_click;
+  std::function<std::wstring()> build_name;   // the game build Play Melee starts
+  std::function<void()> build_menu;           // pick another
 };
 // Bailey, or the player's own rail picture (32bpp premultiplied), drawn in the sidebar above the card.
 void set_rail_art(HBITMAP bitmap, int w, int h);
