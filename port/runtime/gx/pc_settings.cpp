@@ -2410,6 +2410,19 @@ void load_pc_settings(RenderOptions& options, int& volume) {
     value = first == std::string::npos ? std::string() : value.substr(first);
     while (!value.empty() && (value.back() == '\r' || value.back() == ' ' || value.back() == '\t')) value.pop_back();
     if (key == "truewsfit") { truewsfit_seen = true; continue; }
+    // Read outside the long else-if chain below: one more branch there is past MSVC's nesting limit (C1061).
+    if (key == "proaireaction") { options.pro_ai_extra_delay = std::clamp(std::atoi(value.c_str()), 0, phillip_ai::kMaxExtraDelay); continue; }
+    if (key == "practicechord") {
+      const int chord = (int)std::strtol(value.c_str(), nullptr, 16);
+      if (host::settings_shortcut::valid_practice_chord((uint16_t)chord)) options.practice_chord = chord;
+      continue;
+    }
+    if (key == "vspro") {
+      int v[4] = {-1, -1, -1, -1};
+      std::sscanf(value.c_str(), "%d,%d,%d,%d", &v[0], &v[1], &v[2], &v[3]);
+      for (int i = 0; i < 4; ++i) options.vs_pro[i] = std::clamp(v[i], -1, 99);
+      continue;
+    }
     if (value.empty()) continue;
     if (source_port::mods::parse_choice(key, value, &options.mod_choices)) continue;
     if (load_rtx_key(key, value)) continue;
@@ -2536,10 +2549,6 @@ void load_pc_settings(RenderOptions& options, int& volume) {
       else if (key == "damagehudscale") options.damage_hud_scale = std::clamp(std::atoi(value.c_str()), 75, 175);
       else if (key == "playernicknames") options.show_player_nicknames = value == "1";
       else if (key == "matchmakinghint") options.matchmaking_hint = value != "0";
-      else if (key == "practicechord") {
-        const int chord = (int)std::strtol(value.c_str(), nullptr, 16);
-        if (host::settings_shortcut::valid_practice_chord((uint16_t)chord)) options.practice_chord = chord;
-      }
       else if (key == "practiceopens") options.practice_opens = std::clamp(std::atoi(value.c_str()), 0, 99);
       else if (key == "practicestyle") { const int n = std::atoi(value.c_str()); if (n >= 0 && n < practice_menu::kStyleCount) options.practice_style = n; }
       else if (key == "effects") { int n = std::atoi(value.c_str()); if (n >= 0 && n <= 3) options.effects_level = n; }
@@ -2621,15 +2630,9 @@ void load_pc_settings(RenderOptions& options, int& volume) {
       else if (key == "hide_ko_explosions") options.hide_ko_explosions = value == "1";
       else if (key == "hide_hud_emblems") options.hide_hud_emblems = value == "1";
       else if (key == "proaistronger") options.pro_ai_stronger = std::clamp(std::atoi(value.c_str()), 0, 2);
-      else if (key == "proaireaction") options.pro_ai_extra_delay = std::clamp(std::atoi(value.c_str()), 0, phillip_ai::kMaxExtraDelay);
       else if (key == "community_codes") options.community_codes = (uint32_t)std::strtoul(value.c_str(), nullptr, 16) & (MU_DISPLAY_OPTION_CODES_ALL | MU_DISPLAY_OPTION_OFFLINE_CODES);
       else if (key == "unlock_all") options.unlock_all = value != "0";
       else if (key == "zelda_as_sheik") options.zelda_as_sheik = value == "1";
-      else if (key == "vspro") {
-        int v[4] = {-1, -1, -1, -1};
-        std::sscanf(value.c_str(), "%d,%d,%d,%d", &v[0], &v[1], &v[2], &v[3]);
-        for (int i = 0; i < 4; ++i) options.vs_pro[i] = std::clamp(v[i], -1, 99);
-      }
       else if (key == "results_screen") options.results_screen = value != "0";
       else if (key == "training_hud") options.training_hud = value != "0";
 #ifndef MELEE_NO_SLIPPI
