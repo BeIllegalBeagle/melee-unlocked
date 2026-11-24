@@ -267,6 +267,8 @@ class MeleeIntegrator final : public RtxIntegrator {
     // Look tests (MELEE_TEST_RTX_LOOK): 1 clear but faithful, 2 the painted stage relit (rtx_direct.hlsl).
     static const int look_test = [] { const char* v = host::test_env::getenv("MELEE_TEST_RTX_LOOK"); return v ? std::atoi(v) : 0; }();
     if (look_test == 1) k.switches |= 1u << 23; else if (look_test == 2) k.switches |= 1u << 24;
+    static const bool no_colour = host::test_env::getenv("MELEE_TEST_RTX_NO_COLOUR") != nullptr;   // A/B: colour grade off
+    if (no_colour) k.switches |= 1u << 22;
     std::memcpy(s.constants_cpu, &k, sizeof k);
 
     in.list->SetComputeRootSignature(root_.Get());

@@ -231,6 +231,9 @@ bool RemixBridge::start(int width, int height, bool hidden, std::string* error, 
     // exposure drew Battlefield, Stadium and Final Destination 1.8 to 2.4 times as bright as the game;
     // fixed, 1.05 to 1.26). MELEE_REMIX_AUTO_EXPOSURE=1: Remix's automatic exposure.
     std::string text = "rtx.orthographicIsUI = True\n";
+    // More colour after tone mapping (owner 11-24, D2): 1.15 matches the +30% grade of the other two renderers (Remix starts more saturated). MELEE_REMIX_SATURATION overrides (1 = none).
+    { const char* v = std::getenv("MELEE_REMIX_SATURATION");
+      text += std::string("rtx.tonemap.colorGradingEnabled = True\nrtx.tonemap.saturation = ") + (v ? v : "1.15") + "\n"; }
     if (!std::getenv("MELEE_REMIX_AUTO_EXPOSURE"))
       text += "rtx.autoExposure.enabled = False\nrtx.tonemappingMode = 0\nrtx.tonemap.exposureBias = -1\n";
     if (const char* v = std::getenv("MELEE_REMIX_CONF"))

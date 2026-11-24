@@ -82,6 +82,7 @@ static const uint kShadows = 1u, kAmbientOcclusion = 2u, kFighterShadows = 4u, k
 // Look tests (MELEE_TEST_RTX_LOOK, 11-24, his "RTX looks stale"): 1 clear but faithful, 2 the painted
 // stage relit by the rays. Neither is a setting yet.
 static const uint kLookClear = 1u << 23, kLookRelight = 1u << 24;
+static const uint kNoColourGrade = 1u << 22;   // MELEE_TEST_RTX_NO_COLOUR
 
 static const float kPi = 3.14159265;
 static const uint kNone = 0xFFFFFFFFu;
@@ -397,6 +398,15 @@ void write_guides(uint2 px, float3 diffuse, float3 specular, float3 view_normal,
 // Out to the presenter, which takes linear light (it encodes for the display).
 // Water (Fountain of Dreams): the game paints its water as a blended layer over the floor, so the
 // traced reflection is laid over that layer (s_top, s_top_mix of the picture) instead of under it.
+// Colour (owner 11-24, preview D2: "more colour, no extra contrast"): the ray-traced picture's
+// saturation +30%, less on colours already strong, brightness and contrast unchanged (luma kept).
+float3 colour_grade(float3 lin) {
+  if ((switches & kNoColourGrade) != 0u) return lin;
+  const float y = dot(lin, float3(0.2126, 0.7152, 0.0722));
+  const float hi = max(lin.r, max(lin.g, lin.b)), lo = min(lin.r, min(lin.g, lin.b));
+  const float sat = (hi - lo) / max(hi, 1e-4);
+  return max(y + (lin - y) * (1.0 + 0.30 * (1.0 - 0.6 * sat)), 0.0);
+}
 static float3 s_top = 0;
 static float s_top_mix = 0;
 void emit(uint2 px, float3 lit, float3 albedo) {
@@ -414,7 +424,7 @@ void emit(uint2 px, float3 lit, float3 albedo) {
   if (still_frames > 0u && kept_ok) light = lerp(kept, light, 1.0 / (float)(min(still_frames, 255u) + 1u));
   Accum[px] = float4(light, 1);
   // What the raster drew over the surface goes back on top, composed as GX blended it (encoded).
-  float3 shown = linear_to_srgb(light * base) * Trans[px].rgb + Overlay[px].rgb;
+  float3 shown = linear_to_srgb(colour_grade(light * base)) * Trans[px].rgb + Overlay[px].rgb;
   // Multiply blend: the water keeps its colours and the reflected scene shows as its light and shade
   // (brightness only, so the water's hues stay), up to kWaterReflection * 2 deep.
   if (s_top_mix > 0.0) {
@@ -468,7 +478,7 @@ void main(uint3 id : SV_DispatchThreadID) {
   // No surface, or a see-through pixel of a piece the game blends over what is behind it (a stage
   // mod's spotlight cones, glass): the picture as the game drew it there.
   if (draw == 0u || nd.w <= 0.0 || (gid & 0x80000000u) != 0u) {
-    Output[px] = float4(srgb_to_linear(Raster[px].rgb), 1);
+    Output[px] = float4(colour_grade(srgb_to_linear(Raster[px].rgb)), 1);
     write_guides(px, 1.0, 0.0, float3(0, 0, 1), 1.0);   // a valid normal (facing the camera) for Ray Reconstruction
     return;
   }
