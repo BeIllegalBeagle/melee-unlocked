@@ -236,7 +236,7 @@ static Answer run(bool staging, const std::string& version, int timeout_ms, cons
     const std::string line = channel::request_line(body);
     if (line.empty() || !conn->write_line(line)) return json();
     std::unique_lock<std::mutex> lock(box->m);
-    const auto until = std::min(end, std::chrono::steady_clock::now() + std::chrono::milliseconds(ms));
+    const auto until = (std::min)(end, std::chrono::steady_clock::now() + std::chrono::milliseconds(ms));
     box->cv.wait_until(lock, until, [&] { return box->answers.count(id) || box->eof; });
     if (!box->answers.count(id)) return json();
     json j = std::move(box->answers[id]);
@@ -253,7 +253,7 @@ static Answer run(bool staging, const std::string& version, int timeout_ms, cons
     if (!pending) break;
     {
       std::unique_lock<std::mutex> lock(box->m);
-      box->cv.wait_until(lock, std::min(end, std::chrono::steady_clock::now() + std::chrono::milliseconds(wait_ms)),
+      box->cv.wait_until(lock, (std::min)(end, std::chrono::steady_clock::now() + std::chrono::milliseconds(wait_ms)),
                          [&] { return box->arrived || box->eof; });
       box->arrived = false;
     }
