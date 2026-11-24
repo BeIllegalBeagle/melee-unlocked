@@ -2394,31 +2394,31 @@ int main(int argc, char** argv) {
     g_disc_bytes.assign(0x400, 0);
     std::copy(zelda_retail.begin(), zelda_retail.end(), g_disc_bytes.begin() + zelda_at);
     std::copy(sheik_retail.begin(), sheik_retail.end(), g_disc_bytes.begin() + sheik_at);
-    g_disc_table = {{"PlZdRe.dat", {zelda_at, (uint32_t)zelda_retail.size()}},
-                    {"PlSkRe.dat", {sheik_at, (uint32_t)sheik_retail.size()}}};
+    g_disc_table = {{"PlZdNr.dat", {zelda_at, (uint32_t)zelda_retail.size()}},
+                    {"PlSkNr.dat", {sheik_at, (uint32_t)sheik_retail.size()}}};
     fs::path pack_folder = pair_folder / L"pack";
     fs::create_directories(pack_folder, ec);
-    write_file(pack_folder / L"PlZdRe.lat", zelda_l);
-    write_file(pack_folder / L"PlSkRe.lat", sheik_l);
+    write_file(pack_folder / L"PlZdNr.lat", zelda_l);
+    write_file(pack_folder / L"PlSkNr.lat", sheik_l);
     auto scan = host::cosmetics::scan_disc_skins(pack_folder.string(), "ZS", &error);
     std::string zelda_id, sheik_id;
     for (const auto& item : host::cosmetics::assets()) {
-      if (item.target_path == "PlZdRe.dat" && item.variant == "alt L") zelda_id = item.id;
-      if (item.target_path == "PlSkRe.dat" && item.variant == "alt L") sheik_id = item.id;
+      if (item.target_path == "PlZdNr.dat" && item.variant == "alt L") zelda_id = item.id;
+      if (item.target_path == "PlSkNr.dat" && item.variant == "alt L") sheik_id = item.id;
     }
-    check(scan.ok && !zelda_id.empty() && !sheik_id.empty(), "the pack has a red Zelda and a red Sheik");
-    auto fst = two_file_fst("PlZdRe.dat", zelda_at, (uint32_t)zelda_retail.size(),
-                            "PlSkRe.dat", sheik_at, (uint32_t)sheik_retail.size());
+    check(scan.ok && !zelda_id.empty() && !sheik_id.empty(), "the pack has a Zelda and a Sheik of the default color");
+    auto fst = two_file_fst("PlZdNr.dat", zelda_at, (uint32_t)zelda_retail.size(),
+                            "PlSkNr.dat", sheik_at, (uint32_t)sheik_retail.size());
     host::cosmetics::apply_to_fst(fst.data(), (uint32_t)fst.size());
     auto selected = [](const std::string& id) {
       for (const auto& item : host::cosmetics::assets()) if (item.id == id) return item.selected;
       return false;
     };
-    auto step = host::cosmetics::cycle_slot_live("PlZdRe.dat", 1);
-    check(step.ok && step.changed && step.asset_id == zelda_id && step.partner_slot == "PlSkRe.dat" && selected(sheik_id),
+    auto step = host::cosmetics::cycle_slot_live("PlZdNr.dat", 1);
+    check(step.ok && step.changed && step.asset_id == zelda_id && step.partner_slot == "PlSkNr.dat" && selected(sheik_id),
           "Zelda's pack skin brings the same pack's Sheik skin of the same color");
-    step = host::cosmetics::cycle_slot_live("PlZdRe.dat", -1);
-    check(step.ok && step.changed && step.asset_id.empty() && step.partner_slot == "PlSkRe.dat" && !selected(sheik_id),
+    step = host::cosmetics::cycle_slot_live("PlZdNr.dat", -1);
+    check(step.ok && step.changed && step.asset_id.empty() && step.partner_slot == "PlSkNr.dat" && !selected(sheik_id),
           "back to Zelda's standard costume, Sheik's standard comes back too");
     g_disc_table.clear(); g_disc_bytes.clear();
   }
