@@ -301,6 +301,9 @@ void mu_ranked_rank_frame(void)
         refresh();
     }
     ms = mu_slippi_css_msrb();
+    /* Every frame, not only at the refresh: a new search clears the set line at once. */
+    panel.matched = ms->connection_state == MU_SLP_MM_OPPONENT_CONNECTING ||
+                    ms->connection_state == MU_SLP_MM_CONNECTION_SUCCESS;
     set = mu_ranked_set();
     if (panel.left && ms->connection_state == MU_SLP_MM_IDLE && !mu_ranked_practice()) {
         if (panel.left == MU_YG_REASON_FORFEIT_WON) strcpy(score, "Opponent left: you win");
