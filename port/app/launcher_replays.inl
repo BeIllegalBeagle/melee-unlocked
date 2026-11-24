@@ -452,7 +452,11 @@ void refresh_replays(const std::filesystem::path& selected={}) {
     std::vector<std::pair<std::filesystem::file_time_type,std::filesystem::path>> unique_found;
     for(size_t i=0;i<keyed.size();++i) if(i==0||keyed[i].first!=keyed[i-1].first) unique_found.push_back(found[keyed[i].second]);
     found.swap(unique_found);
-    if(!choice.empty()&&std::none_of(found.begin(),found.end(),[&](const auto& f){return f.second==choice;})) {
+    // A replay opened from elsewhere stays listed, but only while it is still there: right after a delete the
+    // remembered choice is the deleted file, which came back as a row that could not be read or deleted
+    // (tyler631, 11-23; it went away only when the launcher restarted).
+    std::error_code there_error;
+    if(!choice.empty()&&std::filesystem::is_regular_file(choice,there_error)&&std::none_of(found.begin(),found.end(),[&](const auto& f){return f.second==choice;})) {
       std::error_code fe; found.emplace_back(std::filesystem::last_write_time(choice,fe),choice);
     }
     {
@@ -879,6 +883,22 @@ LRESULT CALLBACK replay_list_proc(HWND h,UINT m,WPARAM w,LPARAM l,UINT_PTR,DWORD
     return PtInRect(&watch,p)?2:(PtInRect(&stats,p)?1:(PtInRect(&queue,p)?3:(PtInRect(&del,p)?4:0)));
   };
   switch(m) {
+    // No flicker while scrolling: the list is drawn off screen (every card, then the space under the last) and
+    // put on screen in one copy; nothing is erased first.
+    case WM_ERASEBKGND: return 1;
+    case WM_PAINT: {
+      PAINTSTRUCT ps; HDC dc=BeginPaint(h,&ps);
+      RECT c; GetClientRect(h,&c);
+      if(c.right>0&&c.bottom>0) {
+        HDC md=CreateCompatibleDC(dc); HBITMAP bm=CreateCompatibleBitmap(dc,c.right,c.bottom); HGDIOBJ old=SelectObject(md,bm);
+        fill(md,c,C_CONTENT_BOT);
+        DefSubclassProc(h,WM_PRINTCLIENT,(WPARAM)md,PRF_CLIENT);
+        BitBlt(dc,ps.rcPaint.left,ps.rcPaint.top,ps.rcPaint.right-ps.rcPaint.left,ps.rcPaint.bottom-ps.rcPaint.top,md,ps.rcPaint.left,ps.rcPaint.top,SRCCOPY);
+        SelectObject(md,old); DeleteObject(bm); DeleteDC(md);
+      }
+      EndPaint(h,&ps);
+      return 0;
+    }
     case WM_MOUSEMOVE: {
       int row; const int zone=zone_at(POINT{GET_X_LPARAM(l),GET_Y_LPARAM(l)},&row);
       if(row!=g_replay_hot||zone!=g_replay_hot_zone) {
@@ -1335,7 +1355,8 @@ void paint_replays(HDC dc) {
     fill(dc,LR(212,104,760,2),C_ACC_LO);
     return;
   }
-  draw_text(dc,L"Replay Viewer",LR(214,24,420,32),g_font_big,C_TEXT,DT_LEFT|DT_VCENTER|DT_SINGLELINE);
+  if(brawl_pages()) launcher::skin::heading(dc,g_main,L"Replays",S(214),S(14));   // the look's heading
+  else draw_text(dc,L"Replay Viewer",LR(214,24,420,32),g_font_big,C_TEXT,DT_LEFT|DT_VCENTER|DT_SINGLELINE);
   // The status shows under the title, where nothing covers it. It used to sit in the button row,
   // under the "Save replays" box and the Watch live button, so "Waiting for a live game..." was hidden
   // and pressing Watch live looked like it did nothing.
