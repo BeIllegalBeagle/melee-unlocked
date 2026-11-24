@@ -783,6 +783,23 @@ int mu_test_classic_stage(void)
     return *v == '\0' ? n : -1;
 }
 
+/* MELEE_TEST_VS_TEAMS=<t1>,<t2>,<t3>,<t4> (tests only): VS Mode as a team match, each port on that team (0 red,
+ * 1 blue, 2 green; '-' or missing leaves the port's team). Returns 0 when unset. */
+int mu_test_vs_teams(int teams[4])
+{
+    const char* v = mu_test_getenv("MELEE_TEST_VS_TEAMS");
+    int i;
+    if (v == NULL || *v == '\0') {
+        return 0;
+    }
+    for (i = 0; i < 4; i++) {
+        teams[i] = *v >= '0' && *v <= '2' ? *v - '0' : -1;
+        while (*v != '\0' && *v != ',') v++;
+        if (*v == ',') v++;
+    }
+    return 1;
+}
+
 /* MELEE_TEST_VS_STAGE=<n> (tests only): VS mode goes straight to stage n, the external id the stage
  * select would pick (32 Final Destination, 31 Battlefield, 28 Dream Land, 2 Fountain of Dreams,
  * 3 Pokemon Stadium, 8 Yoshi's Story, or an m-ex disc's added ids), so a hidden run reaches any stage.

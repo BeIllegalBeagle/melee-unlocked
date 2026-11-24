@@ -10652,6 +10652,33 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
                             "CPU. Two CPU ports set to pros fight each other. Offline VS only: never online, in\n"
                             "Unranked or Ranked.");
       }
+      // The stronger policies were only offered in Training's Fight a pro, so VS pros stayed on the base one
+      // (owner 11-24). The same choice as Training's, one row.
+      {
+        // On: every stronger policy is downloaded once (kept in ProAI\\) and plays from then on. Off: the base
+        // ones. "Ask" (a settings file from before, Training's question not answered) shows as on once all are here.
+        static phillip_ai::StrongerStatus st;
+        static double st_at = -10.0;
+        if (ImGui::GetTime() - st_at > 1.0) { st = phillip_ai::stronger_status(-1); st_at = ImGui::GetTime(); }
+        const int choice = options.pro_ai_stronger;
+        bool on = choice == phillip_ai::kStrongerAlways || (choice == phillip_ai::kStrongerAsk && st.total > 0 && st.missing == 0);
+        if (settings_toggle("Stronger Pro AI", &on)) {
+          options.pro_ai_stronger = on ? phillip_ai::kStrongerAlways : phillip_ai::kStrongerNever;
+          phillip_ai::set_stronger_choice(options.pro_ai_stronger);
+          if (on) phillip_ai::download_stronger(-1);
+          st_at = -10.0;
+          changed = true;
+        }
+        if (ImGui::IsItemHovered())
+          ImGui::SetTooltip("The pros play Phillip's newest, much stronger AI, in VS Mode and Training.\n"
+                            "Downloaded once (about 90 MB each), kept, and used every match after that.\n"
+                            "A PC too slow for them keeps the regular ones.");
+        ImGui::SameLine();
+        if (!on) ImGui::TextDisabled("regular pros");
+        else if (st.downloading) ImGui::TextDisabled("downloading...");
+        else if (st.missing) ImGui::TextDisabled("%.0f MB to download", st.missing_mb);
+        else ImGui::TextDisabled("downloaded");
+      }
     }
     if (settings_toggle("Show results screen", &options.results_screen)) {
       RenderOptions::live_results_screen() = options.results_screen;
@@ -10697,8 +10724,10 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
       for (int port = 0; port < 4; ++port) shield_row(ports[port], &options.shield_color[port], port);
       ImGui::Separator();
       shield_row("Online (you)", &options.shield_color_online, 0);
-      settings_hint("Your shield and KO blast colours. Online, \"Online (you)\" is yours (left empty, your P1 colour): players"
-                    " on Melee Unlocked see it, players on Slippi Dolphin see your port colour. Team matches keep team colours.");
+      settings_hint("Your shield and KO blast colours, in every match, team matches included. Online, \"Online (you)\" is"
+                    " yours (left empty, your P1 colour): everyone on Melee Unlocked sees it, Slippi Dolphin players see the"
+                    " port colour. Players who never chose one show the usual port or team colour. On the Static Recomp,"
+                    " team matches keep team colours.");
       ImGui::Unindent(8.0f);
     }
     // Input delay, Online and Discord sit here, right below the game's own switches (owner, 0.9.201);
