@@ -2518,6 +2518,7 @@ void load_pc_settings(RenderOptions& options, int& volume) {
       else if (key == "showfps_yougame2") saved_showfps_yougame = value == "1";
       else if (key == "showvram") options.show_vram = value == "1";
       else if (key == "showping") options.show_ping = value == "1";
+      else if (key == "liveping") options.live_ping = value == "1";
       else if (key == "netoverlay") net_overlay::set_enabled(value == "1");
       // Diagnostic, off unless someone is hunting a one-frame glitch: see RenderOptions::flicker_scan.
       // Settings-file only rather than a control in the panel, because it costs a readback on every
@@ -5213,7 +5214,7 @@ static bool write_settings_file_impl(const SettingsState& state, const RenderOpt
        << "\nshowfps " << (g_display_keys.yougame ? g_display_keys.show_fps : options.show_fps)
        << (g_display_keys.yougame ? std::string("\nshowfps_yougame2 ") + (options.show_fps ? "1" : "0")
            : g_display_keys.saved_showfps_yougame >= 0 ? "\nshowfps_yougame2 " + std::to_string(g_display_keys.saved_showfps_yougame) : std::string())
-       << "\nshowvram " << (options.show_vram ? 1 : 0) << "\nshowping " << options.show_ping
+       << "\nshowvram " << (options.show_vram ? 1 : 0) << "\nshowping " << options.show_ping << "\nliveping " << (options.live_ping ? 1 : 0)
        << "\nnetoverlay " << (net_overlay::enabled() ? 1 : 0)
        << "\ndlss " << options.dlss_mode << "\nframegen " << options.frame_generation_mode
        << "\nfgmax " << options.fg_cached_max << "\nfgdynamic " << (options.fg_cached_dynamic ? 1 : 0)
@@ -12106,7 +12107,16 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
     changed |= settings_toggle("Performance overlay", &options.performance_overlay);
     changed |= settings_toggle("FPS counter (top left)", &options.show_fps);
     // VRAM has its own line in the Video tab, right by the settings that move it; no overlay needed.
-    changed |= settings_toggle("Ping while online (under the FPS)", &options.show_ping);
+    {
+      // One row (owner 11-24: no more rows): off, the ping held a second at a time, or every reading.
+      static const char* const kPing[] = {"Off", "Once a second", "Live"};
+      int ping = !options.show_ping ? 0 : options.live_ping ? 2 : 1;
+      if (settings_combo("Ping while online (under the FPS)", &ping, kPing, 3)) {
+        options.show_ping = ping != 0;
+        if (ping) options.live_ping = ping == 2;
+        changed = true;
+      }
+    }
     {
       bool net = net_overlay::enabled();
       if (settings_toggle("Network and timing", &net)) { net_overlay::set_enabled(net); changed = true; }
@@ -12751,7 +12761,7 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
         static int single_ping = 0;
         static double read_at = -1.0;
         const double now = ImGui::GetTime();
-        if (read_at < 0.0 || now - read_at >= 1.0 || now < read_at) {
+        if (options.live_ping || read_at < 0.0 || now - read_at >= 1.0 || now < read_at) {
           pings = slippi::online::remote_pings_ms();
           single_ping = slippi::online::ping_ms();
           read_at = now;
