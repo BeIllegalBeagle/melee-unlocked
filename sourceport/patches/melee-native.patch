@@ -53359,7 +53359,7 @@ index 64ba6ce21..eec263b13 100644
                      {
                          continue;
 diff --git a/src/melee/ft/ft_07C6.c b/src/melee/ft/ft_07C6.c
-index 917d69ac4..f635c8ffd 100644
+index 917d69ac4..1259f8697 100644
 --- a/src/melee/ft/ft_07C6.c
 +++ b/src/melee/ft/ft_07C6.c
 @@ -21,11 +21,12 @@ void ft_8007C630(Fighter_GObj* gobj)
@@ -53409,8 +53409,29 @@ index 917d69ac4..f635c8ffd 100644
          if (a == b) {
              var_r0 = 0;
          } else {
-@@ -104,19 +106,19 @@ void ft_8007C77C(Fighter_GObj* gobj)
+@@ -102,21 +104,49 @@ void ft_8007C77C(Fighter_GObj* gobj)
+             var_r29 = 1;
+         }
          if (!var_r29) {
++#ifdef MU_NATIVE
++            {
++                /* MELEE_TEST_COIN_LOG (tests only): a coin this fighter touches but may not collect, with
++                 * the coin's own flag byte (0x80 anyone may, 0x40 its owner may). */
++                extern const char* mu_test_getenv(const char* name);
++                static int log_refused = -1;
++                if (log_refused < 0) log_refused = mu_test_getenv("MELEE_TEST_COIN_LOG") != NULL;
++                if (log_refused) {
++                    Fighter_x1614_t probe = ip->xDD4_itemVar.unk4.xDF0;
++                    for (i = 0; i < 2; i++) {
++                        if (lbColl_80007B78(&probe, &fp->x1614[i], ip->scl, fp->x34_scale.y)) {
++                            OSReport("[coin] P%d touched a coin it may not collect (flags %02X, own %d)\n", fp->player_idx + 1,
++                                     (unsigned) ((u8*) &ip->xDD4_itemVar)[0x18], ftLib_80086FD4(gobj, ip->owner) != 0);
++                            break;
++                        }
++                    }
++                }
++            }
++#endif
              continue;
          }
 -        temp_r26 = ip->xDD4_itemVar.unk4.xDF0;
@@ -53429,6 +53450,15 @@ index 917d69ac4..f635c8ffd 100644
 -                                         Player_GetTotalCoins(fp->player_id));
 +                                         Player_GetTotalCoins(fp->player_idx));
                  lbAudioAx_80023870(0x93, 0x7F, 0x40, 0x1A);
++#ifdef MU_NATIVE
++                {
++                    /* MELEE_TEST_COIN_LOG (tests only): each coin a fighter collects. */
++                    extern const char* mu_test_getenv(const char* name);
++                    static int log_coins = -1;
++                    if (log_coins < 0) log_coins = mu_test_getenv("MELEE_TEST_COIN_LOG") != NULL;
++                    if (log_coins) OSReport("[coin] P%d collected %d (now %d)\n", fp->player_idx + 1, (int) temp_r29, Player_GetCoins(fp->player_idx));
++                }
++#endif
                  sp18 = 1.0f;
 -                efSync_Spawn(0x432, NULL, temp_r26[2], &sp18);
 +                efSync_Spawn(0x432, NULL, &temp_r26->x20, &sp18);
@@ -100763,7 +100793,7 @@ index bdc4d71b6..9df736bdd 100644
  typedef struct ChallengerData ChallengerData;
  typedef struct MatchEnd MatchEnd;
 diff --git a/src/melee/gm/gm_1601.c b/src/melee/gm/gm_1601.c
-index 7ad706ec1..40a270487 100644
+index 7ad706ec1..273c04e6a 100644
 --- a/src/melee/gm/gm_1601.c
 +++ b/src/melee/gm/gm_1601.c
 @@ -1,3 +1,7 @@
@@ -101921,7 +101951,7 @@ index 7ad706ec1..40a270487 100644
      if ((rules->score_display != 0) && (rules->mode == 0)) {
          vs_data->start.rules.x3_0 = 1;
          return;
-@@ -3715,6 +3907,16 @@ void gm_80167FC4(SSSData* arg0)
+@@ -3715,6 +3907,25 @@ void gm_80167FC4(SSSData* arg0)
      PAD_STACK(8);
  
      temp_r3 = gmMainLib_GetGameRules();
@@ -101929,6 +101959,15 @@ index 7ad706ec1..40a270487 100644
 +    {
 +        /* Test runs only: straight to the stage MELEE_TEST_VS_STAGE names. */
 +        const int test_stage = mu_test_vs_stage();
++        {
++            /* MELEE_TEST_VS_MODE=<0-3> (tests only): the VS rules' mode (0 time, 1 stock, 2 coin,
++             * 3 bonus), so a hidden run plays a Coin battle. */
++            extern const char* mu_test_getenv(const char* name);
++            const char* m = mu_test_getenv("MELEE_TEST_VS_MODE");
++            if (m != NULL && *m >= '0' && *m <= '3') {
++                temp_r3->mode = (u8) (*m - '0');
++            }
++        }
 +        if (test_stage >= 0) {
 +            arg0->force_stage_id = test_stage;
 +            return;
@@ -101938,7 +101977,7 @@ index 7ad706ec1..40a270487 100644
      if (temp_r3->stage_sel == 1) {
          arg0->force_stage_id = mnSelStageRandom();
          return;
-@@ -3850,54 +4052,69 @@ int gm_80168940(MatchEnd* match_end)
+@@ -3850,54 +4061,69 @@ int gm_80168940(MatchEnd* match_end)
  
  void gm_8016895C(HSD_JObj* arg0, DynamicModelDesc* arg1, int idx)
  {
@@ -102028,7 +102067,7 @@ index 7ad706ec1..40a270487 100644
      if (ckind == CKind_GKoops) {
          return 58.0F;
      }
-@@ -3930,11 +4147,51 @@ float gm_80168BF8(int arg0)
+@@ -3930,11 +4156,51 @@ float gm_80168BF8(int arg0)
  {
      CharacterKind ckind = Player_GetPlayerCharacter(arg0);
      u32 costume = Player_GetCostumeId(arg0);
@@ -102081,7 +102120,7 @@ index 7ad706ec1..40a270487 100644
      switch (arg0) {
      case 0:
          lbAudioAx_800243F4(0x7C830);
-@@ -4164,14 +4421,32 @@ u8 gm_GetNumCostumesForCKind(u8 ckind)
+@@ -4164,14 +4430,32 @@ u8 gm_GetNumCostumesForCKind(u8 ckind)
          HSD_Randi(0);
          HSD_Randi(0);
      }
@@ -102114,7 +102153,7 @@ index 7ad706ec1..40a270487 100644
      if (ckind >= ARRAY_SIZE(lbl_803D51A0)) {
          return 0;
      }
-@@ -4180,6 +4455,11 @@ u8 gm_80169264(u8 ckind)
+@@ -4180,6 +4464,11 @@ u8 gm_80169264(u8 ckind)
  
  u8 gm_80169290(u8 ckind)
  {
@@ -102126,7 +102165,7 @@ index 7ad706ec1..40a270487 100644
      if (ckind >= ARRAY_SIZE(lbl_803D51A0)) {
          return 0;
      }
-@@ -4188,6 +4468,11 @@ u8 gm_80169290(u8 ckind)
+@@ -4188,6 +4477,11 @@ u8 gm_80169290(u8 ckind)
  
  u8 gm_801692BC(u8 ckind)
  {
@@ -150104,7 +150143,7 @@ index 4dfb2105f..61a5cfcfa 100644
  {
      ip->entered_hitlag = efLib_PauseAll;
 diff --git a/src/melee/it/itCharItems.h b/src/melee/it/itCharItems.h
-index 3650dc522..a448a82be 100644
+index 3650dc522..2bbbbe7c5 100644
 --- a/src/melee/it/itCharItems.h
 +++ b/src/melee/it/itCharItems.h
 @@ -10,6 +10,7 @@
@@ -150412,7 +150451,7 @@ index 3650dc522..a448a82be 100644
  ASSERT_SIZE(struct itSeakChain_Attrs, 0x6C);
  
  typedef struct itClimbersString_ItemVars {
-@@ -827,13 +828,13 @@ typedef struct itZeldaDinFireExplodeAttributes {
+@@ -827,13 +828,18 @@ typedef struct itZeldaDinFireExplodeAttributes {
      /* +8 */ f32 x8;
      /* +C */ f32 xC;
      /* +10 */ f32 x10;
@@ -150421,14 +150460,21 @@ index 3650dc522..a448a82be 100644
  
  typedef struct itUnk4_ItemVars {
      /*  +0 ip+DD4 */ u8 pad[0x18];
-     /*  +18 ip+DEC */ u8 xDEC_b0 : 1;
-     /*  +18 ip+DEC */ u8 xDEC_b1 : 1;
+-    /*  +18 ip+DEC */ u8 xDEC_b0 : 1;
+-    /*  +18 ip+DEC */ u8 xDEC_b1 : 1;
 -    /*  +1C ip+DF0 */ Mtx xDF0;
++    /* The coin's own code writes these two through UnkFlagStruct (it_2E5A_ItemVars.x18), whose bits
++     * are laid out as on the console. Declared plainly here, a PC build put them at the other end
++     * of the byte: a fighter never saw a coin as collectable (Coin Mode, the Spare Change event). */
++    struct {
++        /*  +18 ip+DEC */ u8 xDEC_b0 : 1;
++        /*  +18 ip+DEC */ u8 xDEC_b1 : 1;
++    } DISC_STRUCT;
 +    /*  +1C ip+DF0 */ Fighter_x1614_t xDF0;
  } itUnk4_ItemVars;
  
  typedef struct itGamewatchchef_ItemVars {
-@@ -847,19 +848,19 @@ typedef struct itGamewatchchefAttrEntry {
+@@ -847,19 +853,19 @@ typedef struct itGamewatchchefAttrEntry {
      /* +8 */ f32 x8;
      /* +C */ f32 xC;
      /* +10 */ f32 x10;
@@ -150453,7 +150499,7 @@ index 3650dc522..a448a82be 100644
  
  typedef struct itHinoarashi_ItemVars {
      /* xDD4 */ u8 _0[0x60 - 0x0];
-@@ -878,7 +879,7 @@ typedef struct itHinoarashiAttributes {
+@@ -878,7 +884,7 @@ typedef struct itHinoarashiAttributes {
      /* +C */ u8 _pad[0x10 - 0xC];
      /* +10 */ f32 x10;
      /* +14 */ f32 x14;
@@ -150462,7 +150508,7 @@ index 3650dc522..a448a82be 100644
  
  typedef struct itTools_ItemVars {
      /* +0 ip+DD4 */ s32 x0;
-@@ -892,7 +893,7 @@ typedef struct itToolsMotionAttrs {
+@@ -892,7 +898,7 @@ typedef struct itToolsMotionAttrs {
      /* +10 */ f32 x10;
      /* +14 */ f32 x14;
      /* +18 */ f32 x18;
@@ -150471,7 +150517,7 @@ index 3650dc522..a448a82be 100644
  
  typedef struct itToolsAttributes {
      /* +00 */ f32 x0;
-@@ -900,7 +901,7 @@ typedef struct itToolsAttributes {
+@@ -900,7 +906,7 @@ typedef struct itToolsAttributes {
      /* +08 */ f32 x8;
      /* +0C */ s32 xC;
      /* +10 */ itToolsMotionAttrs motions[1];
