@@ -1842,19 +1842,6 @@ std::vector<bool> of(const std::vector<uint8_t>& bytes) {
 }
 }  // namespace texanims
 
-// Public: the first texture the disc's own costume animates and `candidate` does not (its index as the
-// game counts textures), or -1. The game's own costume setup stops on such a costume ("can't find
-// fighter texture anim!"); both engines' versions of it let that texture stay still instead, but a mod
-// disc's own copy of the setup keeps the stop (Akaneia with Diet Melee 64's Falco, 1.0.19 report).
-int costume_missing_texture_anim(const std::vector<uint8_t>& clean, const std::vector<uint8_t>& candidate) {
-  const std::vector<bool> want = texanims::of(clean), have = texanims::of(candidate);
-  for (size_t i = 0; i < want.size(); ++i)
-    if (want[i] && (i >= have.size() || !have[i])) return (int)i;
-  return -1;
-}
-namespace { bool (*g_strict_texture_anims)() = nullptr; }
-void set_strict_texture_anims(bool (*fn)()) { g_strict_texture_anims = fn; }
-
 // The served copy of an online-allowed costume skin gets the standard costume's joint rest pose
 // (skeleton::copy_rest_pose). Returns how many joints differed; 0 when nothing had to change.
 uint32_t costume_take_standard_bones(const std::vector<uint8_t>& clean, std::vector<uint8_t>& served) {
@@ -1869,6 +1856,20 @@ uint32_t costume_take_standard_bones(const std::vector<uint8_t>& clean, std::vec
 }
 
 }  // namespace
+
+// Public: the first texture the disc's own costume animates and `candidate` does not (its index as the
+// game counts textures), or -1. The game's own costume setup stops on such a costume ("can't find
+// fighter texture anim!"); both engines' versions of it let that texture stay still instead, but a mod
+// disc's own copy of the setup keeps the stop (Akaneia with Diet Melee 64's Falco, 1.0.19 report).
+int costume_missing_texture_anim(const std::vector<uint8_t>& clean, const std::vector<uint8_t>& candidate) {
+  const std::vector<bool> want = texanims::of(clean), have = texanims::of(candidate);
+  for (size_t i = 0; i < want.size(); ++i)
+    if (want[i] && (i >= have.size() || !have[i])) return (int)i;
+  return -1;
+}
+bool (*g_strict_texture_anims)() = nullptr;
+void set_strict_texture_anims(bool (*fn)()) { g_strict_texture_anims = fn; }
+
 
 // Public: whether the game can draw this costume at all. Offline and online alike, unlike the
 // skeleton comparison below: a file that fails here stops the game on any machine.
