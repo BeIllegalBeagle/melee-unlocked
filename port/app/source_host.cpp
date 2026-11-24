@@ -2976,8 +2976,15 @@ int32_t h_slippi_command(uint8_t command, const uint8_t* payload, uint32_t paylo
             cfg.tech_odds[MU_PC_TECH_MISS] = 100;
           }
           cfg.enabled = 1;
-          host::log("replay: the opponent defends (setting %d, aggression %d, techs %d %d %d %d)", defense, cfg.aggression,
-                    cfg.tech_odds[0], cfg.tech_odds[1], cfg.tech_odds[2], cfg.tech_odds[3]);
+          {   // asked every frame: logged when it changes (a session logged it 10,338 times, 11-24)
+            static int last[6] = {-1, -1, -1, -1, -1, -1};
+            const int now[6] = {defense, cfg.aggression, cfg.tech_odds[0], cfg.tech_odds[1], cfg.tech_odds[2], cfg.tech_odds[3]};
+            if (!std::equal(now, now + 6, last)) {
+              std::copy(now, now + 6, last);
+              host::log("replay: the opponent defends (setting %d, aggression %d, techs %d %d %d %d)", defense, cfg.aggression,
+                        cfg.tech_odds[0], cfg.tech_odds[1], cfg.tech_odds[2], cfg.tech_odds[3]);
+            }
+          }
           const auto* bytes = reinterpret_cast<const uint8_t*>(&cfg);
           reply.assign(bytes, bytes + sizeof cfg);
           return true;
@@ -4960,6 +4967,56 @@ void* launch_arena_viewer(const std::string& path) {
   host::log("arena: viewer pid %lu", pi.dwProcessId);
   return pi.hProcess;
 }
+#elif !defined(MELEE_NO_SLIPPI) && defined(__linux__)
+// The same viewer on Linux (it was a stub: "viewer did not open", Linux report 11-24): this program again,
+// its path from /proc/self/exe and its arguments from /proc/self/cmdline, started through the compat
+// CreateProcessA (posix_spawn), whose handle the room's viewer_running / close_viewer already read.
+void* launch_arena_viewer(const std::string& path) {
+  std::error_code ec;
+  const std::string exe = std::filesystem::read_symlink("/proc/self/exe", ec).string();
+  if (ec || exe.empty()) { host::log("arena: viewer did not start (no /proc/self/exe)"); return nullptr; }
+  std::vector<std::string> argv;
+  {
+    std::ifstream f("/proc/self/cmdline", std::ios::binary);
+    std::string a;
+    while (std::getline(f, a, '\0')) argv.push_back(a);
+  }
+  auto quote = [](const std::string& a) {
+    std::string q = "\"";
+    for (char c : a) { if (c == '"') q += '\\'; q += c; }
+    return q + "\"";
+  };
+  std::string cmd = quote(exe);
+  bool hidden = false;
+  // Kept and dropped as on Windows: how it looks and runs, never online, a script or the room.
+  static const char* const with_value[] = {"--iso", "--sys-dir", "--settings-path", "--shader-cache", "--backend",
+                                           "--volume", "--mod-base-iso", "--look-iso", "--user-dir"};
+  static const char* const flags[] = {"--load-settings", "--hidden", "--headless", "--no-music"};
+  for (size_t i = 1; i < argv.size(); ++i) {
+    const std::string& a = argv[i];
+    bool kept = false;
+    for (const char* f : flags) if (a == f) { cmd += " " + a; kept = true; if (a != "--load-settings" && a != "--no-music") hidden = true; }
+    for (const char* w : with_value)
+      if (!kept && a == w && i + 1 < argv.size()) { cmd += " " + a + " " + quote(argv[++i]); kept = true; }
+  }
+  const std::filesystem::path live = std::filesystem::u8path(path);
+  cmd += " --replay " + quote(live.u8string());
+  cmd += " --spectate-view " + std::to_string(std::clamp(gx::RenderOptions::live_spectate_view(), 0, 2));
+  cmd += " --replay-dir " + quote((live.parent_path() / "viewer").u8string());
+  if (hidden) cmd += " --log-file " + quote((live.parent_path() / (live.stem().u8string() + ".log")).u8string());
+  STARTUPINFOA si{};
+  si.cb = sizeof si;
+  PROCESS_INFORMATION pi{};
+  std::vector<char> line(cmd.begin(), cmd.end());
+  line.push_back(0);
+  if (!CreateProcessA(exe.c_str(), line.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr, &si, &pi)) {
+    host::log("arena: viewer did not start (error %lu)", (unsigned long)GetLastError());
+    return nullptr;
+  }
+  if (pi.hThread) CloseHandle(pi.hThread);
+  host::log("arena: viewer pid %lu", (unsigned long)pi.dwProcessId);
+  return pi.hProcess;
+}
 #elif !defined(MELEE_NO_SLIPPI)
 void* launch_arena_viewer(const std::string&) { return nullptr; }
 #endif
@@ -6578,6 +6635,12 @@ int run(void (*shutdown)(int)) {
   slippi::spectate::start();   // Slippi Dolphin's spectator server (settings: Spectator server)
   slippi::arena::set_recording_codes(std::vector<uint8_t>(std::begin(native_online_recording_codes), std::end(native_online_recording_codes)));
   slippi::arena::set_viewer_launcher(launch_arena_viewer);
+  // Tests only (hidden runs): MELEE_TEST_ARENA_VIEWER=<live .slp> opens the room's viewer on it at start,
+  // so the viewer launch is proven on each platform without a room (Linux had a stub, report 11-24).
+  if (const char* v = host::test_env::getenv("MELEE_TEST_ARENA_VIEWER"); v && *v) {
+    void* viewer = launch_arena_viewer(v);
+    host::log("arena test: viewer launch on %s %s", v, viewer ? "started" : "failed");
+  }
   slippi::arena::set_friends_exit([] { slippi::native_practice::submit_arena_from_friends(); });
 #endif
 #ifdef __APPLE__

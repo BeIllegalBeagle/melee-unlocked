@@ -33,6 +33,7 @@ struct Data {
   bool players_known = false;   // the list of who is online came (it needs a sign-in, or the YouGame app)
   int me_matches = -1, me_wins = -1, me_losses = -1;   // ranked matches YouGame counted (-1 unknown); wins and losses when known
   std::wstring me_label;                               // YouGame's rank label ("Placements 0/5", "Gold II")
+  int me_tier = -1;                                    // YouGame's own tier for you, 0 Bronze to 5 Challenger (-1 unplaced)
   std::vector<int> me_history;                         // your ratings as this launcher saw them, oldest first
 };
 
@@ -86,6 +87,9 @@ void open_yougame_page();
 // The page's own art for other views: a rank badge by rating (? ring when unranked), a character's stock icon (a plain
 // avatar for -1). Sizes in pixels.
 void draw_badge(HDC dc, int rating, int x, int y, int px);
+// Your own tier (0 Bronze to 5 Challenger, -1 none): YouGame's word for it when it sent one, else from the rating.
+int my_tier(const Data& d);
+void draw_tier_badge(HDC dc, int tier, int x, int y, int px);
 void draw_stock(HDC dc, int main, int x, int y, int px);
 bool draw_avatar(HDC dc, const std::string& url, int x, int y, int px);   // a round profile picture, once it has loaded
 int tier_of_rating(int rating);   // -1 unranked, 0 bronze .. 5 challenger
