@@ -1162,9 +1162,9 @@ static void text_think(HSD_GObj* gobj)
         char lk[16], rk[16];
         if (ctrl_port != NULL && mu_host_button_label(*ctrl_port, HSD_PAD_L, lk, sizeof lk) &&
             mu_host_button_label(*ctrl_port, HSD_PAD_R, rk, sizeof rk)) {
-            snprintf(prompt, sizeof prompt, "Hold %s+%s to warm up", lk, rk);
+            snprintf(prompt, sizeof prompt, "Hold %s\x81\x7B%s to warm up", lk, rk);   /* the font's plus: SIS drops an ASCII '+' */
         } else {
-            strcpy(prompt, "Hold L+R to warm up");
+            strcpy(prompt, "Hold L\x81\x7BR to warm up");
         }
         set_text(ST_PRESS_D, prompt);
     }
