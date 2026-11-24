@@ -610,7 +610,7 @@ class D3D12Backend : public Backend {
   bool remix_layer_ = false;
   bool remix_mode_ = false;
   bool remix_boot_ = false;   // RTX Remix was the choice at start (Streamline not loaded): see remix_wanted   // RTX Remix draws the matches (the Lighting setting or MELEE_REMIX=1): DLSS and our path tracer stand down
-  uint8_t remix_layer_draw(const DrawCall& dc) const;   // the Remix layer carries this draw: 1 instead of Remix's scene, 2 as well as its sky, 3 over Remix's own
+  uint8_t remix_layer_draw(const DrawCall& dc) const;   // the Remix layer carries this draw: 1 instead of Remix's scene, 2 as well as its sky, 3 over Remix's own; 4 water, 5 Remix sky only (no layer)
   uint64_t remix_log_seq_ = 0;   // the frame being submitted (test logs)
   size_t hud_first_scene_draw_ = 0;   // this frame's first 3D scene draw (earlier 2D draws are backdrops)
   // DLAA renders and outputs at the same size, so it anti-aliases the EFB in place and the ordinary
@@ -832,6 +832,13 @@ class D3D12Backend : public Backend {
   // This frame's reflective stage floors' own textures (remix_layer_draw): every stage draw with one of
   // them goes to the layer, so a floor is all the game's or all Remix's, never strips of both.
   std::unordered_set<uint32_t> remix_floor_tex_;
+  // This frame's fighter shadow maps (EFB copies drawn only by orthographic, untextured draws): not a
+  // copy of the scene, so a draw reading one is no reflective floor or live screen.
+  std::unordered_set<uint32_t> remix_shadow_copies_;
+  // This frame's sky domes: stage draws around the camera (vertices behind it and far in front).
+  std::unordered_set<const DrawCall*> remix_domes_;
+  std::unordered_set<const DrawCall*> remix_far_planes_;
+  bool scene_copy(uint32_t addr) const { return efb_copies_.count(addr) && !remix_shadow_copies_.count(addr); }
   uint64_t ps_cache_sequence_ = ~0ull;
   int ps_cache_scale_ = 0;
   std::vector<PSConstants> ps_cache_;
@@ -2783,7 +2790,7 @@ ID3D12PipelineState* D3D12Backend::get_pso(const DrawCall& dc, D3D12_PRIMITIVE_T
   const bool remix_layer = remix_layer_ && !gbuffer && mvec_out();
   if (remix_layer) psu.motion_vectors |= 4u;
   const uint8_t remix_ld = remix_layer ? remix_layer_draw(dc) : 0;
-  const uint32_t remix_bits = remix_layer ? 16u | (remix_ld && remix_ld != 4 ? 32u : 0u) : 0u;
+  const uint32_t remix_bits = remix_layer ? 16u | (remix_ld && remix_ld != 4 && remix_ld != 5 ? 32u : 0u) : 0u;
   {
     static const uint64_t fx_log = [] { const char* v = std::getenv("MELEE_REMIX_FXLOG"); return v ? std::strtoull(v, nullptr, 10) : 0ull; }();
     if (fx_log && remix_effect_draw(dc) && remix_log_seq_ == fx_log)
@@ -3011,6 +3018,8 @@ void D3D12Backend::draw_under_hand(const EfbCopy& screen) {
 // which Remix cannot load as a file.
 uint8_t D3D12Backend::remix_layer_draw(const DrawCall& dc) const {
   if (!is_scene_draw(dc)) return 0;
+  if (remix_domes_.count(&dc)) return 1;
+  if (remix_far_planes_.count(&dc)) return 5;
   if (remix_effect_draw(dc)) return 1;
   // A fighter mid-flash (hit, charge, invincibility): shown as the game draws it while Remix keeps
   // the fighter for its shadow and reflection.
@@ -3029,7 +3038,7 @@ uint8_t D3D12Backend::remix_layer_draw(const DrawCall& dc) const {
   static const bool reflective_layer = std::getenv("MELEE_REMIX_REFLECTIVE_SCENE") == nullptr;
   for (int map = 0; map < 8; ++map) {
     const TextureRef& t = dc.textures[map];
-    if (!t.used || no_efb_layer) continue;
+    if (!t.used || no_efb_layer || remix_shadow_copies_.count(t.addr)) continue;   // a fighter's shadow map: not the scene
     const auto ec = efb_copies_.find(t.addr);
     if (ec == efb_copies_.end() || !ec->second.resource) continue;
     const bool water = remix_water && dc.owner_player == 0xFF && host::g_stage_water.load(std::memory_order_relaxed);
@@ -3078,6 +3087,8 @@ uint8_t D3D12Backend::remix_layer_draw(const DrawCall& dc) const {
         if (!dc.bp.order_enable((int)n)) continue;
         const int map = dc.bp.order_texmap((int)n), gen = dc.bp.order_texcoord((int)n);
         if (map < 0 || map >= 8 || !dc.textures[map].used) continue;
+        // A fighter's shadow map read over the stage's art is no second picture to keep.
+        if (remix_shadow_copies_.count(dc.textures[map].addr)) continue;
         if (first_map < 0) { first_map = map; first_gen = gen; continue; }
         if (map != first_map && gen != first_gen) return 1;
       }
@@ -3557,7 +3568,7 @@ void D3D12Backend::execute_draw(const Frame& frame, const DrawCall& dc, const Dr
   } else if (remix_layer_) {
     // The Remix layer's lane (flags.z, gx_shader.cpp): an effect blends into it (1) or replaces it (2).
     const uint8_t ld = remix_layer_draw(dc);
-    const int32_t lane = ld && ld != 4 ? ((dc.bp.blendmode() & 1) ? 1 : 2) : 0;
+    const int32_t lane = ld && ld != 4 && ld != 5 ? ((dc.bp.blendmode() & 1) ? 1 : 2) : 0;
     std::memcpy(ccpu + offsetof(PSConstants, flags) + 2 * sizeof(int32_t), &lane, sizeof lane);
     static const uint64_t fx_log = [] { const char* v = std::getenv("MELEE_REMIX_FXLOG"); return v ? std::strtoull(v, nullptr, 10) : 0ull; }();
     if (fx_log && frame.sequence == fx_log && remix_layer_draw(dc))
@@ -3818,13 +3829,17 @@ void D3D12Backend::remix_present(const Frame& frame) {
     g_remix_running.store(true, std::memory_order_relaxed);
     set_rtx_status(2, "");
   }
-  // The settings panel is the game's own overlay: Remix's window steps aside while it is open.
+  // The settings panel is the game's own overlay: Remix's window steps aside while it is open. In a
+  // match it also waits until Remix has ray traced a frame (the game's own picture shows until then: a
+  // first start compiling Remix's shaders, or a Remix that never starts tracing).
   if (embed) {
     remix_->place(px, py, pw, ph);
+    const bool whole = !(in_match_ && frame.rtx.present && !frame.rtx.cameras.empty());
+    const bool ready = whole || remix_->tracing();
 #ifdef GX_PC_SETTINGS
-    remix_->show(!(settings_ui_ && settings_ui_->overlay_visible()));   // F1 panel, Esc menu, Practice menu on top
+    remix_->show(ready && !(settings_ui_ && settings_ui_->overlay_visible()));   // F1 panel, Esc menu, Practice menu on top
 #else
-    remix_->show(true);
+    remix_->show(ready);
 #endif
   } else {
     static bool shown = false;
@@ -5576,13 +5591,78 @@ void D3D12Backend::submit_frame(const Frame& frame, const DrawMatrices* override
   FlashLog flash_log{flash_fill, flash_since, flash_presented};
   set_presented_test_fill(flash_mode == 1 ? flash_fill : frame.test_fill);
   remix_floor_tex_.clear();
+  remix_shadow_copies_.clear();
+  remix_domes_.clear();
+  remix_far_planes_.clear();
   if (remix_layer_) {
+    // Sky domes (Final Destination's nebula: a sphere around the camera tinted by its vertex colours):
+    // Remix takes no vertex colours, so it showed a dark flat purple. Painted as the game draws them
+    // (remix_layer_draw); everything drawn in front later empties the layer, so they stay behind.
+    // MELEE_REMIX_DOMES=0: to Remix as before.
+    static const bool domes = [] { const char* v = std::getenv("MELEE_REMIX_DOMES"); return !v || std::atoi(v) != 0; }();
+    for (const DrawCall& d : frame.draws) {
+      if (!domes || d.owner_player != 0xFF || d.skinned || d.xf_regs[0x26] != 0) continue;
+      // A backdrop plane far behind the stage, near the game's far plane (Fountain of Dreams' sky: a black
+      // quad at half the far distance, untextured). Lit by Remix's violet stage lights it showed as a violet sky.
+      // Sent to Remix as sky (drawn unlit as it is), not to the layer: Dream Land's and Yoshi's Story's painted
+      // skies sit in front of theirs without writing depth and would not have emptied the layer over it.
+      {
+        float p[6];
+        std::memcpy(p, &d.xf_regs[0x20], sizeof p);
+        const float far_z = p[4] != 0.0f ? p[5] / p[4] : 0.0f;
+        bool textured = false;
+        for (const TextureRef& t : d.textures) textured = textured || t.used;
+        // Untextured only: Dream Land's painted sky is a textured far plane that Remix shows itself.
+        bool all_far = !textured && far_z > 1000.0f && d.vertex_count > 0;
+        for (uint32_t k = 0; all_far && k < d.vertex_count && d.first_vertex + k < frame.vertices.size(); ++k) {
+          const Vertex& v = frame.vertices[d.first_vertex + k];
+          const int row = (int)(v.posmtx & 0x3F);
+          if (row + 2 >= 64) { all_far = false; break; }
+          const float* pm = &d.posMatrices[(row + 2) * 4];
+          all_far = pm[0] * v.pos[0] + pm[1] * v.pos[1] + pm[2] * v.pos[2] + pm[3] < -0.4f * far_z;
+        }
+        if (all_far) { remix_far_planes_.insert(&d); continue; }
+      }
+      if (d.vertex_count < 24) continue;
+      bool behind = false, far_ahead = false;
+      for (uint32_t k = 0; k < d.vertex_count && d.first_vertex + k < frame.vertices.size() && !(behind && far_ahead); ++k) {
+        const Vertex& v = frame.vertices[d.first_vertex + k];
+        const int row = (int)(v.posmtx & 0x3F);
+        if (row + 2 >= 64) continue;
+        const float* pm = &d.posMatrices[(row + 2) * 4];
+        const float z = pm[0] * v.pos[0] + pm[1] * v.pos[1] + pm[2] * v.pos[2] + pm[3];   // view space looks down -z
+        behind = behind || z > 50.0f;
+        far_ahead = far_ahead || z < -2000.0f;
+      }
+      if (behind && far_ahead) remix_domes_.insert(&d);
+    }
+
+    // The fighters' shadow maps: copies made only from orthographic, untextured draws (each fighter's
+    // silhouette, drawn every frame). The ground under a fighter reads them through its later textures,
+    // which made every piece of it a "reflective floor" for the rules below: Yoshi's Story's ground and
+    // platforms, Battlefield's platforms and all of Final Destination went to the layer and were missing
+    // from Remix's scene. Remix casts its own fighter shadows, so these draws are its own.
+    bool any_draw = false, shadow_like = true;
+    for (const FrameCommand& cmd : frame.commands) {
+      if (cmd.kind == FrameCommand::Draw) {
+        const DrawCall& d = frame.draws[cmd.index];
+        bool textured = false;
+        for (const TextureRef& t : d.textures) textured = textured || t.used;
+        any_draw = true;
+        if (d.xf_regs[0x26] == 0 || textured) shadow_like = false;
+        continue;
+      }
+      const EfbCopy& c = frame.copies[cmd.index];
+      if (!c.to_xfb && any_draw && shadow_like) remix_shadow_copies_.insert(c.dest_addr);
+      any_draw = false;
+      shadow_like = true;
+    }
     // A reflective stage floor (Pokemon Stadium's field, Dream Land's water) reads the game's copy of
     // the scene through a texture past its first; its first texture is the floor's own art.
     for (const DrawCall& d : frame.draws) {
       if (d.owner_player != 0xFF || !d.textures[0].used || efb_copies_.count(d.textures[0].addr)) continue;
       for (int map = 1; map < 8; ++map)
-        if (d.textures[map].used && efb_copies_.count(d.textures[map].addr)) { remix_floor_tex_.insert(d.textures[0].addr); break; }
+        if (d.textures[map].used && scene_copy(d.textures[map].addr)) { remix_floor_tex_.insert(d.textures[0].addr); break; }
     }
   }
   Stopwatch frame_sw;
