@@ -835,6 +835,8 @@ class D3D12Backend : public Backend {
   // This frame's fighter shadow maps (EFB copies drawn only by orthographic, untextured draws): not a
   // copy of the scene, so a draw reading one is no reflective floor or live screen.
   std::unordered_set<uint32_t> remix_shadow_copies_;
+  // This frame's sky domes: stage draws around the camera (vertices behind it and far in front).
+  std::unordered_set<const DrawCall*> remix_domes_;
   bool scene_copy(uint32_t addr) const { return efb_copies_.count(addr) && !remix_shadow_copies_.count(addr); }
   uint64_t ps_cache_sequence_ = ~0ull;
   int ps_cache_scale_ = 0;
@@ -3015,6 +3017,7 @@ void D3D12Backend::draw_under_hand(const EfbCopy& screen) {
 // which Remix cannot load as a file.
 uint8_t D3D12Backend::remix_layer_draw(const DrawCall& dc) const {
   if (!is_scene_draw(dc)) return 0;
+  if (remix_domes_.count(&dc)) return 1;
   if (remix_effect_draw(dc)) return 1;
   // A fighter mid-flash (hit, charge, invincibility): shown as the game draws it while Remix keeps
   // the fighter for its shadow and reflection.
@@ -5587,7 +5590,28 @@ void D3D12Backend::submit_frame(const Frame& frame, const DrawMatrices* override
   set_presented_test_fill(flash_mode == 1 ? flash_fill : frame.test_fill);
   remix_floor_tex_.clear();
   remix_shadow_copies_.clear();
+  remix_domes_.clear();
   if (remix_layer_) {
+    // Sky domes (Final Destination's nebula: a sphere around the camera tinted by its vertex colours):
+    // Remix takes no vertex colours, so it showed a dark flat purple. Painted as the game draws them
+    // (remix_layer_draw); everything drawn in front later empties the layer, so they stay behind.
+    // MELEE_REMIX_DOMES=0: to Remix as before.
+    static const bool domes = [] { const char* v = std::getenv("MELEE_REMIX_DOMES"); return !v || std::atoi(v) != 0; }();
+    for (const DrawCall& d : frame.draws) {
+      if (!domes || d.owner_player != 0xFF || d.skinned || d.xf_regs[0x26] != 0 || d.vertex_count < 24) continue;
+      bool behind = false, far_ahead = false;
+      for (uint32_t k = 0; k < d.vertex_count && d.first_vertex + k < frame.vertices.size() && !(behind && far_ahead); ++k) {
+        const Vertex& v = frame.vertices[d.first_vertex + k];
+        const int row = (int)(v.posmtx & 0x3F);
+        if (row + 2 >= 64) continue;
+        const float* pm = &d.posMatrices[(row + 2) * 4];
+        const float z = pm[0] * v.pos[0] + pm[1] * v.pos[1] + pm[2] * v.pos[2] + pm[3];   // view space looks down -z
+        behind = behind || z > 50.0f;
+        far_ahead = far_ahead || z < -2000.0f;
+      }
+      if (behind && far_ahead) remix_domes_.insert(&d);
+    }
+
     // The fighters' shadow maps: copies made only from orthographic, untextured draws (each fighter's
     // silhouette, drawn every frame). The ground under a fighter reads them through its later textures,
     // which made every piece of it a "reflective floor" for the rules below: Yoshi's Story's ground and
