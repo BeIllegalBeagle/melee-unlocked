@@ -1695,8 +1695,11 @@ void tick() {
       g_open_on_arrival = 0;
     } else if (online::in_online_menus() && g_css_mode.load() == (int)Matchmaking::DIRECT && !css_friends_lobby()) {
       g_open_on_arrival = 0;
-      event("on the online select: the room opens with its invite");
-      yg_act(Pending{Act::AddCode, 0, {}});
+      // The invite is the YouGame app's friend picker: with the app there the room opens on it; under the
+      // launcher alone (no picker) only the room opens, and Z on its card invites as it does from Direct.
+      const bool picker = yougame::active() || yougame::channel_connected();
+      event(picker ? "on the online select: the room opens with its invite" : "on the online select: the room opens");
+      yg_act(Pending{picker ? Act::AddCode : Act::OpenRoom, 0, {}});
     }
   }
   test_add_codes();

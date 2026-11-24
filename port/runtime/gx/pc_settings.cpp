@@ -5139,7 +5139,7 @@ static void draw_arena_panel(RenderOptions& options, const host::PadState* pads,
                     (slippi::online::friends_lobby_armed() ? 8 : 0) | (yougame::session() ? 16 : 0) | (slippi::online::in_online_menus() ? 32 : 0);
     if (now != last && (now & 4 || last & 4)) {
       last = now;
-      host::log("arena panel: on the Friends lobby's select: %s (lobby select %d, armed %d, YouGame %d, online menus %d)",
+      host::log("arena panel: %s (Friends lobby select %d, armed %d, YouGame %d, online menus %d)",
                 f.on_online_menus ? "offered" : "not offered", (now >> 2) & 1, (now >> 3) & 1, (now >> 4) & 1, (now >> 5) & 1);
     } else if (now != last) last = now;
   }
