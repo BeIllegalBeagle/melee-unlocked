@@ -5127,7 +5127,9 @@ static void draw_arena_panel(RenderOptions& options, const host::PadState* pads,
   // 0xEF). The Static Recomp's select never does: it drew an ARENA tab there that nothing opens.
   float hand_x = 0, hand_y = 0;
   // Ranked and Unranked have no rooms: no ARENA tab or "Push the hand here" box on their selects.
-  f.on_online_menus = (slippi::online::in_online_menus() && slippi::arena::css_hand(&hand_x, &hand_y) &&
+  // The YouGame Friends lobby's select too: its ARENA card takes the player to the arena (FromFriends).
+  const bool friends_lobby = slippi::arena::css_friends_lobby() && slippi::online::friends_lobby_armed() && yougame::session();
+  f.on_online_menus = ((slippi::online::in_online_menus() || friends_lobby) && slippi::arena::css_hand(&hand_x, &hand_y) &&
                        !slippi::arena::css_ranked_or_unranked()) ||
                       slippi::arena::test_fixture_active();
   arena_panel::frame(f);

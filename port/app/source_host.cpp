@@ -6520,6 +6520,7 @@ int run(void (*shutdown)(int)) {
   slippi::spectate::start();   // Slippi Dolphin's spectator server (settings: Spectator server)
   slippi::arena::set_recording_codes(std::vector<uint8_t>(std::begin(native_online_recording_codes), std::end(native_online_recording_codes)));
   slippi::arena::set_viewer_launcher(launch_arena_viewer);
+  slippi::arena::set_friends_exit([] { slippi::native_practice::submit_arena_from_friends(); });
 #endif
 #ifdef __APPLE__
   g_mac_running = true;

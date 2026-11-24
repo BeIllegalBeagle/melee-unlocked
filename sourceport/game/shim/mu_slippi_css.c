@@ -342,7 +342,7 @@ void mu_slippi_css_hand(int port, float x, float y)
     unsigned char payload[5];
     int mode;
     unsigned int got = 0;
-    int ix, iy, packed, moved;
+    int ix, iy, packed, moved, lobby_select;
 
     ix = (int) (x * 10.0f);
     iy = (int) (y * 10.0f);
@@ -369,10 +369,13 @@ void mu_slippi_css_hand(int port, float x, float y)
     /* The local player's hand: the controlled port's, or the one that moves. A controller in port 2
      * drives the online select's cursor while the controlled port stays 0, so the check on the port
      * alone never reported that player's hand and no room panel ever showed for them (0.9.201). */
-    if (!mu_slippi_css_online() || ctrl_port == NULL || (port != *ctrl_port && !moved)) {
+    lobby_select = mu_lobby_css();
+    if (lobby_select) {
+        if (!moved) return;   /* the Friends lobby's 4-door select: whichever hand moves */
+    } else if (!mu_slippi_css_online() || ctrl_port == NULL || (port != *ctrl_port && !moved)) {
         return;
     }
-    mode = mu_slippi_state()->mode;
+    mode = lobby_select ? 0x40 : mu_slippi_state()->mode;   /* 0x40: slippi::arena::kCssFriendsLobby */
     if (packed == last && mode == last_mode) {   /* a new select's mode goes out even where the hand stayed */
         return;
     }

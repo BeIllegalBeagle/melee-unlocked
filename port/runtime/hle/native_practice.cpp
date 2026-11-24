@@ -1837,6 +1837,9 @@ void test_request_training(int character) {
   g_commands.push_back({CommandKind::TestTraining, std::to_string(character)});
 }
 
+std::atomic<bool> g_arena_from_friends{false};
+void submit_arena_from_friends() { g_arena_from_friends.store(true); }
+
 void submit_warmup_return() {
   std::lock_guard<std::mutex> lock(g_mutex);
   g_commands.push_back({CommandKind::WarmupReturn, "the player chose Back to match"});
@@ -2110,6 +2113,24 @@ void tick() {
         if (room.size()>0) { yougame::doubles::entry(room); return; }
       }
 #endif
+      // The ARENA card on the Friends lobby's select: as an accepted arena invite, without the join. The lobby
+      // is not disarmed: the select's unload sends its LEAVE, so the room closes for the others.
+      if (g_arena_from_friends.exchange(false)) {
+        host::log("arena: from the Friends lobby to the online select");
+        yougame::friends::events.online_menu(false);
+        slippi::online::native_cleanup_match();
+        g_lifecycle = Lifecycle{};
+        clear_search_metadata();
+        set_online_mode(2);
+        g_practice = {};
+        g_practice.valid = true;
+        g_practice.players[0].active = true;
+        g_practice.players[0].character = 0;
+        write_event_backup();
+        if (g_content_bridge) g_content_bridge(2, true);
+        request_major(kOnlineMajor);
+        return;
+      }
       auto room = yougame::friends::events.take_join(true);
       // An invite into an arena (inviteMode "arena"): the arena joins its YouGame room and the player
       // waits on the online character select (YouGame Friends, the arena's home under YouGame; the game's
