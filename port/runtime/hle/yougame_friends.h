@@ -340,7 +340,9 @@ inline json lobby_ticket(const std::string& compatibility, const std::string& co
   if (!lobby_compatibility(compatibility)) throw std::runtime_error("Invalid Friends lobby compatibility");
   return {{"type", "mpTicket"}, {"players", 4}, {"mode", "singles"},
           {"room", code}, {"ranked", false},
-          {"lobby", {{"version", 1}, {"minPlayers", 1}, {"maxLocalPlayers", 1}, {"compatibility", compatibility}}}};
+          // minPlayers 2: YouGame takes 1 only from a server game that fills its own seats (refused
+          // "server_lobby" since 11-23, so the room never opened).
+          {"lobby", {{"version", 1}, {"minPlayers", 2}, {"maxLocalPlayers", 1}, {"compatibility", compatibility}}}};
 }
 inline bool native_ready(bool yougame, int, const std::string&, const std::string& invite) {
   return !(yougame && !invite.empty());

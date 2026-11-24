@@ -1210,7 +1210,7 @@ BridgeReply handle(const HttpRequest& request, const std::vector<std::string>& t
       const std::string code = backend.room_code ? backend.room_code() : new_room_code();
       json body{{"slug", kSlug}, {"player_id", backend.player_id()}, {"name", a.name}, {"anonymous", false},
                 {"players", players}, {"mode", players == 2 ? "teams" : "singles"}, {"queue", "private"}, {"room", code},
-                {"lobby", {{"version", 1}, {"minPlayers", players == 2 ? 2 : 1}, {"maxLocalPlayers", 1}, {"compatibility", compatibility}}},
+                {"lobby", {{"version", 1}, {"minPlayers", 2}, {"maxLocalPlayers", 1}, {"compatibility", compatibility}}},
                 {"build", parse_or_empty(build_json)}};
       if (const std::string nb = listed_build_id(parse_or_empty(build_json).value("version", std::string())); !nb.empty())
         body["native_build"] = nb;
