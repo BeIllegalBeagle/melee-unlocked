@@ -159,6 +159,11 @@ static void init_icon(int rank)
     HSD_ForeachAnim(panel.icon, JOBJ_TYPE, JOBJ_MASK, HSD_AObjReqAnim, AOBJ_ARG_AF, 0.f);
     HSD_JObjAnimAll(panel.icon);
     HSD_ForeachAnim(panel.icon, JOBJ_TYPE, JOBJ_MASK, HSD_AObjStopAnim, AOBJ_ARG_AOV, NULL, NULL);
+    /* The model's joint animation above writes the root's translation: place the icon after it, or the
+     * position set before is lost (the icon stayed over the "Rank" label whatever it was set to). */
+    panel.icon->translate.x = -9.f;
+    panel.icon->translate.y = -14.3f;
+    HSD_JObjSetMtxDirtySub(panel.icon);
     HSD_GObjObject_80390A70(gobj, HSD_GObj_JObjKind, panel.icon);
     GObj_SetupGXLink(gobj, HSD_GObj_JObjCallback, 1, 129);
 }
