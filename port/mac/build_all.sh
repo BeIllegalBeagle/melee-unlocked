@@ -59,4 +59,4 @@ rm -rf build-mac-full/gen/port-generated.new
 
 echo "== host and app ($ARCH)"
 python3 -B port/mac/build_full.py --arch $ARCH --squad-strike --doubles
-echo "Built build-mac-full$SUFFIX-squad/MeleeUnlocked.app; start it with ./play-mac.command"
+echo "Built build-mac-full$SUFFIX-squad/MeleeUnlocked.app; open it from Finder or with: open build-mac-full$SUFFIX-squad/MeleeUnlocked.app"

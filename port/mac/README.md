@@ -7,7 +7,7 @@ and curl, plus a retail NTSC 1.02 disc:
 port/mac/build_deps.sh                               # once: fills ../deps beside the repository
 port/mac/build_all.sh --arch arm64 path/to/melee.iso # native Apple silicon app
 port/mac/build_all.sh path/to/melee.iso              # x86-64 app, runs under Rosetta
-./play-mac.command                                   # native when built; asks for the disc once
+open build-mac-full-arm64-squad/MeleeUnlocked.app    # or double-click it; asks for the disc once
 ```
 
 `build_deps.sh` builds SDL2, glslang, SPIRV-Cross and static libusb (all universal)
@@ -123,8 +123,8 @@ Finder starts the app with no arguments. The app then uses the disc chosen last
 time, or shows an open panel that takes only a Melee NTSC 1.02 disc image and
 explains what it needs when the player cancels, as a no-argument start on
 Windows does (`standalone_launch_win.h`). The choice is kept in
-`~/.local/share/melee-unlocked/last-iso`, the file `play-mac.command` also uses
-(`disc_choice.h`, `disc_choice_mac.mm`). Any argument at all skips this. The
+`~/.local/share/melee-unlocked/last-iso` (`disc_choice.h`,
+`disc_choice_mac.mm`). Any argument at all skips this. The
 panel starts AppKit through SDL, as the game window does a moment later.
 
 A disc in Downloads, Documents or Desktop makes macOS ask once whether

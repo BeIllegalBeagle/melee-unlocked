@@ -3,7 +3,7 @@
 //
 // As a no-argument start on Windows (port/app/standalone_launch_win.h): the disc chosen last time,
 // else an open panel that takes only a Melee NTSC 1.02 disc image, and the choice is remembered in
-// the file play-mac.command also uses. Any argument at all skips this.
+// melee-unlocked/last-iso under the data folder. Any argument at all skips this.
 #pragma once
 #include <cstdio>
 #include <cstdlib>
