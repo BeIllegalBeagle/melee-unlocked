@@ -430,7 +430,12 @@ static void text_set(HSD_Text* t, unsigned sub, const char* value)
 {
     if (t) HSD_SisLib_803A70A0(t,sub,"%s",value);
 }
-/* This scene owns a pixel-space canvas, unlike CSS/HUD world-space text. */
+/* This scene owns a pixel-space canvas, unlike CSS/HUD world-space text. True widescreen widens the
+ * perspective scene (the timer bar) but not this flat layer, so a pixel x is brought toward the centre
+ * by the same factor (mu_arcade.c does the same): the names and badges stay over the bar, not at the
+ * screen edges. 1 in 4:3 and with Slippi's widescreen code. */
+float mu_picture_widen(void);
+static float widen_x(float x) { return 320.f + (x - 320.f) * mu_picture_widen(); }
 static void header_text(MuRankedWidgets* w, const MuRankedSetupModel* m, const MuMatchState* ms)
 {
     unsigned i;
@@ -462,7 +467,8 @@ static void header_text(MuRankedWidgets* w, const MuRankedSetupModel* m, const M
     for (i=0; i<2; ++i) {
         /* Slippi GameSetup.c InitPlayerInfo: the name at scale 5 and the code 2 units under it at scale 3,
          * gray, both 3.55 units in from x 28 to leave room for the rank icon (10 px a unit here). */
-        w->names[i]=text_create(w,i ? 564.5f : 75.5f,39,.7f*5.f/6.f);
+        w->names[i]=text_create(w,widen_x(i ? 564.5f : 75.5f),39,.7f*5.f/6.f);
+        if (w->names[i]) w->names[i]->x34.x*=mu_picture_widen();   /* glyphs keep their shape */
         if (w->names[i]) {
             unsigned player=i ? !m->local_player : m->local_player;
             char name[31], code[10];
@@ -501,7 +507,7 @@ static void header_ranks(MuRankedWidgets* w, const MuRankedSetupModel* m)
         unsigned side=seat == m->local_player ? 0 : 1;
         /* Slippi's rank icon spot (x +-27.5, y 17.85 world: pixel 320 -+ 275, 54.5), art only as its icons. */
         if (!w->badges[seat]) {
-            w->badges[seat]=mu_rank_badge_create(NULL,side ? 595.f : 45.f,54.5f,1.4f,r[seat]);
+            w->badges[seat]=mu_rank_badge_create(NULL,widen_x(side ? 595.f : 45.f),54.5f,1.4f,r[seat]);
             mu_rank_badge_art_only(w->badges[seat]);
         } else mu_rank_badge_set(w->badges[seat],r[seat]);
     }
