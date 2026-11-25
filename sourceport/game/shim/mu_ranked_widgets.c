@@ -673,6 +673,11 @@ void mu_ranked_widgets_draw(MuRankedWidgets* w, const MuRankedSetupModel* m, con
         int visible=active && local && v->confirming && !v->dialog && (i == 0 || s->type != MU_SETUP_COLOR);
         visibility(&w->buttons[i],visible);
         state(&w->buttons[i],visible && v->button == i ? 1 : 0,0);
+        /* The button's child joint is its yellow highlight frame: the selected button's blink fades it in and
+         * out, but the static pose holds it solid, so the unselected button looked selected (OK and Redo
+         * seemed swapped). Only the selected button shows it, as in Slippi. */
+        if (visible && v->button != i && w->buttons[i].root && w->buttons[i].root->child && w->buttons[i].root->child->child)
+            HSD_JObjSetFlagsAll(w->buttons[i].root->child->child,JOBJ_HIDDEN);
         if (!i) position(&w->buttons[i],s && s->type == MU_SETUP_COLOR ? 0 : -4.8f,-3);
         state(&w->turn[i],active && s->player == (i ? !m->local_player : m->local_player) ? local ? 3 : 1 : 0,0);
     }
