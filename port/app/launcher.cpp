@@ -170,7 +170,8 @@ std::string g_notes_seen;   // launcher.ini notesseen=: the version whose What's
 // player's vanilla disc for the reference code, and a memory card folder of its own.
 std::string g_mod_launch_iso, g_mod_launch_key, g_mod_launch_engine, g_mod_launch_kind;
 bool g_launcher_test = std::getenv("MELEE_LAUNCHER_TEST") != nullptr;
-namespace mod_manager { std::string summary(); void test_get(); }
+namespace mod_manager { std::string summary(); void test_get();
+  bool disc_for_play(const std::string& selected, std::string* iso, std::string* key, std::string* kind, std::string* engine); }
 void start_game();
 std::string static_recomp_exe();
 std::string g_lobby_launch_args;
@@ -2067,6 +2068,11 @@ void start_game() {
     centered_box(g_main, problem.c_str(), L"Melee Unlocked Launcher", MB_OK | MB_ICONWARNING);
     return;
   }
+  // PLAY with a disc mod switched On (ACE...) starts that disc on the picked engine, as its Mods row's Play does.
+  // A lobby or YouGame start keeps its own game; Vanilla is the plain disc by choice.
+  if (g_mod_launch_iso.empty() && g_lobby_launch_args.empty() && g_yougame_launch_args.empty() && !vanilla_active())
+    mod_manager::disc_for_play(g_engine == ENGINE_SOURCE ? "source" : "recomp", &g_mod_launch_iso, &g_mod_launch_key,
+                               &g_mod_launch_kind, &g_mod_launch_engine);
   g_game_exe = !g_mod_launch_iso.empty() ? (g_mod_launch_engine == "source" ? source_exe_in(source_exe_dir()) : static_recomp_exe()) : game_exe();
   if (file_exists(g_game_exe) && game_exe_version_mismatch(g_game_exe)) {
     g_mod_launch_iso.clear(); g_mod_launch_engine.clear(); g_mod_launch_kind.clear(); return;

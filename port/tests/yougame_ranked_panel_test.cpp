@@ -28,6 +28,7 @@ struct HSD_Text {
   HSD_GObj* entity=nullptr;
   int default_kerning=0, default_alignment=-1;
   float pos_x=1,pos_y=1;
+  int default_fitting=0; float box_size_x=0;   // Slippi's aspect box, set by the panel
   struct { float x,y; } font_size{};
   std::vector<std::string> rows;
   struct Row {float x,y,sx=1,sy=1; GXColor color{};};
