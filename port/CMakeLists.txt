@@ -305,7 +305,7 @@ ${melee_dxc_err}")
   # further down, plus MELEE_NO_SLIPPI. With it the lobby needs no Slippi account, an accepted match
   # starts melee_source with --p2p-* (a peer-to-peer session), and automatic pairing is offered.
   # When the normal target's sources or settings change below, change them here as well.
-  add_executable(melee_unlocked WIN32 app/launcher_mod_catalog.cpp runtime/host/mod_scan.cpp runtime/host/mod_profile.cpp app/launcher.cpp app/launcher_replay_data.cpp app/launcher_lobby.cpp app/launcher_lobby_p2p.cpp app/launcher_yougame.cpp
+  add_executable(melee_unlocked WIN32 app/launcher_mod_catalog.cpp runtime/host/mod_scan.cpp runtime/host/mod_profile.cpp app/launcher.cpp app/launcher_replay_data.cpp app/launcher_yglobby.cpp app/launcher_egg.cpp app/launcher_pad.cpp app/launcher_melee_assets.cpp app/launcher_melee_look.cpp app/launcher_skin.cpp app/launcher_lobby.cpp app/launcher_lobby_p2p.cpp app/launcher_yougame.cpp
     third_party/dht/dht.c third_party/monocypher/monocypher.c third_party/monocypher/monocypher-ed25519.c
     runtime/host/updater.cpp runtime/host/net_trace_read.cpp app/launcher_trace_view.cpp app/launcher.rc)
   set_target_properties(melee_unlocked PROPERTIES OUTPUT_NAME MeleeUnlockedLauncher)
@@ -315,7 +315,7 @@ ${melee_dxc_err}")
   target_compile_options(melee_unlocked PRIVATE /EHsc)
   target_compile_definitions(melee_unlocked PRIVATE MELEE_NO_SLIPPI NOMINMAX UNICODE _UNICODE _CRT_SECURE_NO_WARNINGS MELEE_PORT_VERSION="${MELEE_PORT_VERSION}"
     MELEE_VERSION_COMMAS=${MELEE_VERSION_COMMAS})
-  target_link_libraries(melee_unlocked PRIVATE port_disc_rvz comctl32 winhttp ws2_32 bcrypt user32 gdi32 shell32 comdlg32 msimg32 uxtheme winmm)
+  target_link_libraries(melee_unlocked PRIVATE port_disc_rvz port_libusb xinput9_1_0 comctl32 winhttp ws2_32 bcrypt user32 gdi32 shell32 comdlg32 msimg32 uxtheme winmm)
   if(MELEE_YOUGAME_NO_UPSTREAM_UPDATES)
     target_compile_definitions(melee_unlocked PRIVATE MELEE_YOUGAME_NO_UPSTREAM_UPDATES=1)
   endif()
@@ -489,6 +489,7 @@ add_executable(port_host_stub_policy_test tests/host_stub_policy_test.cpp)
 target_include_directories(port_host_stub_policy_test PRIVATE runtime/ppc)
 target_compile_features(port_host_stub_policy_test PRIVATE cxx_std_17)
 add_test(NAME port_host_stub_policy COMMAND port_host_stub_policy_test)
+add_test(NAME port_coin_flags COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/coin_flags_test.py")
 add_test(NAME port_stadium_lab_leftover COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/stadium_lab_leftover_test.py")
 add_test(NAME port_shim_reply_capacity COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/shim_reply_capacity_test.py")
 add_test(NAME port_yougame_merge COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/yougame_merge_test.py")
@@ -827,6 +828,13 @@ target_compile_options(port_gc_adapter_reset_test PRIVATE /EHsc)
 target_compile_definitions(port_gc_adapter_reset_test PRIVATE NOMINMAX _CRT_SECURE_NO_WARNINGS)
 target_link_libraries(port_gc_adapter_reset_test PRIVATE port_libusb setupapi hid winmm)
 add_test(NAME port_gc_adapter_reset COMMAND port_gc_adapter_reset_test)
+add_executable(port_gc_adapter_origin_test tests/gc_adapter_origin_test.cpp runtime/host/phob.cpp)
+target_include_directories(port_gc_adapter_origin_test PRIVATE runtime/host runtime/ppc runtime/hle third_party/libusb/libusb)
+target_compile_features(port_gc_adapter_origin_test PRIVATE cxx_std_17)
+target_compile_options(port_gc_adapter_origin_test PRIVATE /EHsc)
+target_compile_definitions(port_gc_adapter_origin_test PRIVATE NOMINMAX _CRT_SECURE_NO_WARNINGS)
+target_link_libraries(port_gc_adapter_origin_test PRIVATE port_libusb setupapi hid winmm)
+add_test(NAME port_gc_adapter_origin COMMAND port_gc_adapter_origin_test)
 set_tests_properties(port_gc_adapter_reset PROPERTIES TIMEOUT 10)
 # The disc is the player's own: with MELEE_TEST_ISO set the test also draws four fighters from it.
 add_executable(port_skin_thumbnail_test tests/skin_thumbnail_test.cpp tests/skin_thumbnail_stubs.cpp runtime/host/skin_thumbnail.cpp runtime/gx/gx_texture.cpp)
@@ -1012,6 +1020,13 @@ target_compile_definitions(port_mu_net_test PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN
 target_compile_options(port_mu_net_test PRIVATE /EHsc /utf-8)
 target_link_libraries(port_mu_net_test PRIVATE mu_net)
 add_test(NAME port_mu_net COMMAND port_mu_net_test)
+# The online late controller read's wait (runtime/host/late_read.h): header only, no game needed.
+add_executable(port_late_read_test tests/late_read_test.cpp)
+target_include_directories(port_late_read_test PRIVATE runtime/host)
+target_compile_features(port_late_read_test PRIVATE cxx_std_17)
+target_compile_definitions(port_late_read_test PRIVATE NOMINMAX)
+target_compile_options(port_late_read_test PRIVATE /EHsc /utf-8)
+add_test(NAME port_late_read COMMAND port_late_read_test)
 endif()
 
 # WIN32: no console window when the game is double-clicked or started from the launcher. Command-line
@@ -1195,7 +1210,7 @@ if(MELEE_CPU_BASELINE STREQUAL "AVX2")
 endif()
 
 # Melee Unlocked client: Win32 launcher (Play page, Build tab, self-update). No runtime dependency.
-add_executable(melee_unlocked WIN32 app/launcher_mod_catalog.cpp runtime/host/mod_scan.cpp runtime/host/mod_profile.cpp app/launcher.cpp app/launcher_replay_data.cpp app/launcher_lobby.cpp app/launcher_lobby_p2p.cpp app/launcher_yougame.cpp
+add_executable(melee_unlocked WIN32 app/launcher_mod_catalog.cpp runtime/host/mod_scan.cpp runtime/host/mod_profile.cpp app/launcher.cpp app/launcher_replay_data.cpp app/launcher_yglobby.cpp app/launcher_egg.cpp app/launcher_pad.cpp app/launcher_melee_assets.cpp app/launcher_melee_look.cpp app/launcher_skin.cpp app/launcher_lobby.cpp app/launcher_lobby_p2p.cpp app/launcher_yougame.cpp
   third_party/dht/dht.c third_party/monocypher/monocypher.c third_party/monocypher/monocypher-ed25519.c
   runtime/host/updater.cpp runtime/host/net_trace_read.cpp app/launcher_trace_view.cpp app/launcher.rc)
 set_target_properties(melee_unlocked PROPERTIES OUTPUT_NAME MeleeUnlockedLauncher)
@@ -1288,7 +1303,7 @@ target_compile_features(melee_unlocked PRIVATE cxx_std_17)
 target_compile_options(melee_unlocked PRIVATE /EHsc)
 target_compile_definitions(melee_unlocked PRIVATE NOMINMAX UNICODE _UNICODE _CRT_SECURE_NO_WARNINGS MELEE_PORT_VERSION="${MELEE_PORT_VERSION}"
   MELEE_VERSION_COMMAS=${MELEE_VERSION_COMMAS})
-target_link_libraries(melee_unlocked PRIVATE port_disc_rvz comctl32 winhttp ws2_32 bcrypt user32 gdi32 shell32 comdlg32 msimg32 uxtheme winmm)
+target_link_libraries(melee_unlocked PRIVATE port_disc_rvz port_libusb xinput9_1_0 comctl32 winhttp ws2_32 bcrypt user32 gdi32 shell32 comdlg32 msimg32 uxtheme winmm)
 if(MELEE_YOUGAME_NO_UPSTREAM_UPDATES)
   target_compile_definitions(melee_unlocked PRIVATE MELEE_YOUGAME_NO_UPSTREAM_UPDATES=1)
 endif()

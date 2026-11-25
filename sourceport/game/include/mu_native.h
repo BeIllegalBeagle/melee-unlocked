@@ -150,6 +150,8 @@ int mu_ko_explosions_hidden(void);
  * each player's damage percent is not drawn (if/ifstatus.c ifStatus_802F5E50). Picture only. */
 #define MU_DISPLAY_NO_HUD_EMBLEMS 0x800u
 int mu_hud_emblems_hidden(void);
+/* "Damage percents: Hidden" (hud_scales bit 16): no percents or emblems drawn (shim/mu_hud_scale.c). */
+int mu_hud_percents_hidden(void);
 /* Community codes (HUD tab, MU_DISPLAY_OPTION_* in mu_host.h), the native versions of the players' favourite Gecko codes. All are
  * picture or sound only: never in a replay, never sent to an opponent. */
 #define MU_DISPLAY_HUD_FADE           0x00001000u   /* HUD Transparency: a player's HUD fades while a fighter is behind it */
@@ -928,9 +930,19 @@ int mu_lobby_watch_pads(struct PADStatus* status);   /* PADRead: a guest on the 
 void mu_lobby_watch_stage(void);
 int mu_lobby_partner_source(void); /* physical controller for the owned local partner, else -1 */
 /* Doubles: the partner door's tab, this machine's alone (never on the wire): FIND each home. */
-enum { MU_LOBBY_WANT_FIND = 0, MU_LOBBY_WANT_INVITE = 1, MU_LOBBY_WANT_P2 = 2, MU_LOBBY_WANT_CPU = 3, MU_LOBBY_WANTS = 4 };
+/* PROAI: the local seat (as P2) played by a Pro AI on this machine (the pro: mu_lobby_partner_pro_*). */
+enum { MU_LOBBY_WANT_FIND = 0, MU_LOBBY_WANT_INVITE = 1, MU_LOBBY_WANT_P2 = 2, MU_LOBBY_WANT_CPU = 3,
+       MU_LOBBY_WANT_PROAI = 4, MU_LOBBY_WANTS = 5 };
 int mu_lobby_partner_want(void);
 void mu_lobby_set_partner_want(int want);
+/* Doubles, the partner tab on Pro AI: which of the pros (0 to MU_LOBBY_PROS - 1), its fighter, its model and
+ * its name. mu_lobby_partner_pro_model is -1 unless the tab is on Pro AI (what the match asks, mu_online.c). */
+#define MU_LOBBY_PROS 4
+int mu_lobby_partner_pro(void);
+void mu_lobby_set_partner_pro(int index);
+int mu_lobby_partner_pro_char(void);
+int mu_lobby_partner_pro_model(void);
+const char* mu_lobby_partner_pro_name(void);
 void mu_lobby_pads(struct PADStatus* status);   /* PADRead: only this player's pad, on its own seat's door */
 void mu_slippi_css_enter(struct CSSData** css, unsigned char* char_chosen, signed char* ctrl_port,
                          unsigned char* scene_request, signed char* name_entry_port,

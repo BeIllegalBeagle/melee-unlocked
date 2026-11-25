@@ -197,6 +197,10 @@ static void pages_notice_show(const char* text);
 static void pages_log_rows(void);
 static void pages_frame(HSD_GObj* menu, int canvas, int idle);
 static int unranked_val = -1;      /* Unranked's slider: 0 YouGame, 1 Both, 2 Slippi; -1 the page's own */
+static int doubles_ranked;         /* Ranked's slider: 0 Ranked (singles, each session's start), 1 Ranked Doubles */
+static void pages_doubles_step(int dir);
+static int pages_ranked_row(void);
+static int pages_ranked_doubles(int option);
 static int pages_refresh;          /* re-hover the row once: its label and description follow */
 static int pages_notice_row = -1;
 static const char* pages_notice;
@@ -489,7 +493,7 @@ void mu_slippi_log_online_rows(void)
 #define MU_ROWS_SQUAD ""
 #endif
 #ifdef MELEE_DOUBLES
-    snprintf(line, sizeof line, "online menu: rows offered Ranked,Unranked,Friends,Doubles,%sSlippi%s tournament=%d\n",
+    snprintf(line, sizeof line, "online menu: rows offered Ranked,Unranked,Doubles,Friends,%sSlippi%s tournament=%d\n",
 #else
     snprintf(line, sizeof line, "online menu: rows offered Ranked,Unranked,Friends,%sSlippi%s tournament=%d\n",
 #endif
@@ -739,11 +743,8 @@ int mu_slippi_on_online_results(void) { return mu_slippi_online_state() == MU_SL
 int mu_slippi_on_online_splash(void) { return mu_slippi_online_state() == MU_SLP_STATE_SPLASH; }
 int mu_slippi_zelda_is_sheik(void)
 {
-#if MU_SQUAD
-    /* Based on Squad Strike by Chris (x9x9x9x9x9), https://github.com/x9x9x9x9x9/squad-strike v1.0.0, used with the author's permission (11-03-2026)
-     * Squads keep the picker's exact Zelda/Sheik kinds, also once a friend room turns them on. */
-    if (gmSquad_OnlineChosen() || gmSquad_LobbyChosen()) return 0;
-#endif
+    /* Squad Strike too (player request, 1.0.20): its picks still record the exact kind, Zelda or Sheik,
+     * that the icon and the selector chose. */
     return mu_slippi_menus_enabled() && zelda_sheik;
 }
 unsigned mu_slippi_online_load_count(void) { return online_loads; }
@@ -1337,6 +1338,12 @@ void mu_slippi_online_menu_think(HSD_GObj* gp)
             const int right = (buttons & MenuInput_Right) || (pressed & 0x0020);   /* mapped GameCube R */
             if (left != right) pages_unranked_step(right ? 1 : -1);
         }
+        /* The same on Ranked: Ranked | Ranked Doubles (owner 11-23: "put it under Ranked"). Z stays the page turn. */
+        if (mn_804A04F0.hovered_selection == pages_ranked_row() && !agent_copy) {
+            const int left = (buttons & MenuInput_Left) || (pressed & 0x0040);
+            const int right = (buttons & MenuInput_Right) || (pressed & 0x0020);
+            if (left != right) pages_doubles_step(right ? 1 : -1);
+        }
     }
     selected_row = mn_804A04F0.hovered_selection;
     selected_option = mu_slippi_menu_option(selected_row);
@@ -1349,10 +1356,12 @@ void mu_slippi_online_menu_think(HSD_GObj* gp)
         sfxForward();
         mu_slippi_tournament_notice(gp, tournament_text);
 #ifdef MELEE_DOUBLES
-    } else if ((buttons & MenuInput_Confirm) && friends_visible && selected_option == MU_SLP_OPT_DOUBLES) {
+    } else if ((buttons & MenuInput_Confirm) && friends_visible &&
+               (selected_option == MU_SLP_OPT_DOUBLES || pages_ranked_doubles(selected_option))) {
         /* The Doubles row opens the 2-seat Doubles home's select (G2: the Friends lobby on its Doubles
-         * profile, E6 value 16). The 4-seat md:1 console home (value 12) stays for md:1 invites. */
-        u8 open_doubles = 16;
+         * profile, E6 value 16). The Ranked row with its slider on Ranked Doubles opens the same home on
+         * the ranked queue (17). The 4-seat md:1 console home (value 12) stays for md:1 invites. */
+        u8 open_doubles = (u8) (pages_ranked_doubles(selected_option) ? 17 : 16);
         mu_slippi_cmd(CMD_YOUGAME_FRIENDS_MENU, &open_doubles, 1, NULL, 0, NULL);
         mn_804D6BC8.cooldown = 5;
         sfxForward();
@@ -1432,11 +1441,11 @@ void mu_slippi_online_menu_think(HSD_GObj* gp)
         }
 #ifdef MELEE_DOUBLES
     } else if ((buttons & MenuInput_Confirm) && split_layout() && !slippi_submenu && !yougame_soon() &&
-               selected_option == MU_SLP_OPT_DOUBLES) {
+               (selected_option == MU_SLP_OPT_DOUBLES || pages_ranked_doubles(selected_option))) {
         /* Under the launcher the Doubles row opens the same 2-seat Doubles home (E6 value 16): the host
          * holds the home through the launcher's bridge, named by YouGame's own record of this release
          * (launcher_yougame.cpp listed_build_id). The pick tells the host this is a YouGame row. */
-        u8 open_doubles = 16;
+        u8 open_doubles = (u8) (pages_ranked_doubles(selected_option) ? 17 : 16);
         yg_pick = 1;
         pages_last_option = selected_option;
         pages_last_page = 0;
@@ -1444,7 +1453,8 @@ void mu_slippi_online_menu_think(HSD_GObj* gp)
         mu_slippi_cmd(CMD_YOUGAME_FRIENDS_MENU, &open_doubles, 1, NULL, 0, NULL);
         mn_804D6BC8.cooldown = 5;
         sfxForward();
-        OSReport("online menu: row %d opens the Doubles home\n", mn_804A04F0.hovered_selection);
+        OSReport("online menu: row %d opens the Doubles home (%s)\n", mn_804A04F0.hovered_selection,
+                 open_doubles == 17 ? "ranked" : "unranked");
 #endif
     } else if ((buttons & MenuInput_Confirm) && yougame_soon() && !pick_slippi()) {
         /* Ranked, Unranked or Friends while YouGame is not connected: the host runs YouGame's start
@@ -1704,6 +1714,7 @@ static struct {
     unsigned char arm;    /* the arming this select opened on (view.arm): another one is never left */
     int partner_source, partner_b_held;   /* Doubles: the controller that plays Player 2's door, its B */
     int partner_want;     /* Doubles: the partner door's tab, MU_LOBBY_WANT_* (this machine's own; FIND each home) */
+    int partner_pro;      /* Doubles, the tab on Pro AI: which pro (mu_lobby_pros) */
     int cancel_held;      /* Doubles: B was down on the last pad read while the home searched */
     int cancel_mask;      /* Doubles: the B that cancelled the search is kept from the select until let go */
     GameRules rules;      /* the player's own rules, back when the lobby closes */
@@ -1819,7 +1830,11 @@ void mu_lobby_pads(PADStatus* status)
     mine = status[src];
     memset(&partner, 0, sizeof partner);
     partner.err = PAD_ERR_NO_CONTROLLER;
-    if (lobby.view_ok && mu_lobby_local_owned(&lobby.view)) {
+    if (lobby.view_ok && mu_lobby_local_owned(&lobby.view) && lobby.partner_want == MU_LOBBY_WANT_PROAI) {
+        /* A Pro AI's door: a still, connected pad (the select puts its coin on the pro's fighter). */
+        partner.err = 0;
+        lobby.partner_source = -1;
+    } else if (lobby.view_ok && mu_lobby_local_owned(&lobby.view)) {
         /* Player 2's door (the partner tab on P2 claimed it: mu_friends4_partner_cycle) is played by the first
          * other connected controller, taken as it is plugged in; until one is, the door stays a person's with a
          * still pad, as if a 2nd controller were plugged in. */
@@ -1898,8 +1913,34 @@ int mu_lobby_partner_want(void)
 }
 void mu_lobby_set_partner_want(int want)
 {
-    if (want < MU_LOBBY_WANT_FIND || want > MU_LOBBY_WANT_CPU) want = MU_LOBBY_WANT_FIND;
+    if (want < MU_LOBBY_WANT_FIND || want >= MU_LOBBY_WANTS) want = MU_LOBBY_WANT_FIND;
     lobby.partner_want = want;
+}
+
+/* The pros a Pro AI partner can be: the Arena panel's own list (port/runtime/gx/arena_panel.cpp kBotChoices),
+ * each fighter with the model trained on that player (shim/mu_practice_cpu.c). */
+static const struct { unsigned char ch, model; const char* name; } mu_lobby_pros[MU_LOBBY_PROS] = {
+    { 2, 3, "Pro AI Fox" }, { 20, 0, "Pro AI Falco" }, { 9, 1, "Pro AI Marth" }, { 17, 4, "Pro AI Yoshi" } };
+int mu_lobby_partner_pro(void)
+{
+    return lobby.partner_pro >= 0 && lobby.partner_pro < MU_LOBBY_PROS ? lobby.partner_pro : 0;
+}
+void mu_lobby_set_partner_pro(int index)
+{
+    lobby.partner_pro = index >= 0 && index < MU_LOBBY_PROS ? index : 0;
+}
+int mu_lobby_partner_pro_char(void)
+{
+    return mu_lobby_pros[mu_lobby_partner_pro()].ch;
+}
+int mu_lobby_partner_pro_model(void)
+{
+    if (!lobby.major || lobby.partner_want != MU_LOBBY_WANT_PROAI) return -1;
+    return mu_lobby_pros[mu_lobby_partner_pro()].model;
+}
+const char* mu_lobby_partner_pro_name(void)
+{
+    return mu_lobby_pros[mu_lobby_partner_pro()].name;
 }
 
 static void lobby_open(void)
@@ -2052,11 +2093,7 @@ static void online_on_load(void)
     lobby_open();
     mu_ranked_set_reset();
     gmMainLib_804D3EE0->vs.unk_530.x6 = gm_801677F0();   /* the 1P port for the event CSS slot */
-    zelda_sheik = 1;                                       /* the Zelda icon picks Sheik */
-#if MU_SQUAD
-    /* Based on Squad Strike by Chris (x9x9x9x9x9), https://github.com/x9x9x9x9x9/squad-strike v1.0.0, used with the author's permission (11-03-2026) */
-    if (gmSquad_OnlineChosen()) zelda_sheik = 0; /* keep the picker's exact Zelda/Sheik kinds */
-#endif
+    zelda_sheik = 1;   /* the Zelda icon picks Sheik, Squad Strike included; the Zelda/Sheik selector picks Zelda */
     online_loads++;
 }
 

@@ -30,6 +30,7 @@
 #include <cstring>
 #include <cstdarg>
 #include <cstdio>
+#include <ctime>
 #include <cfloat>
 #include <sstream>
 #include <sstream>
@@ -54,6 +55,7 @@
 #include "audio.h"
 #include "host.h"
 #include "early_input.h"
+#include "late_read.h"
 #include "input_bindings.h"
 #include "settings_nav.h"
 #include "lcancel.h"
@@ -2329,6 +2331,7 @@ void load_pc_settings(RenderOptions& options, int& volume) {
   options.freeze_fd = false;
   options.hide_ko_explosions = false;
   options.hide_hud_emblems = false;
+  options.hide_percents = false;
   options.community_codes = 0;
   options.pro_ai_stronger = 0;   // a file without the key: ask
   options.pro_ai_extra_delay = 0;
@@ -2496,7 +2499,12 @@ void load_pc_settings(RenderOptions& options, int& volume) {
         slippi::online::config().blocked_codes[key.back() - '1'] = value.substr(0, 16);
       else if (key == "practicecpu") {
         MuPcConfig pc;
-        if (practice_cpu::from_text(value, pc)) practice_cpu::set_config(pc);
+        if (practice_cpu::from_text(value, pc)) {
+          // A Fight a pro pick lasts for its session (grizzly 11-24: Training started with a pro playing by
+          // itself). The next launch starts Training with its usual CPU; the rest of the setup is kept.
+          if (pc.preset & 0x80u) { pc.preset = 0; pc.enabled = 0; }
+          practice_cpu::set_config(pc);
+        }
       }
       else if (key.size() == 16 && key.rfind("practicecpuslot", 0) == 0 && key[15] >= '1' && key[15] <= '3') {
         MuPcConfig pc;
@@ -2510,14 +2518,17 @@ void load_pc_settings(RenderOptions& options, int& volume) {
         offline_delay_frames_seen = true;
       }
       // early_inputs and early_inputs2, older keys (the second saved off for everyone), are not read.
-      else if (key == "early_inputs3" || key == "early_inputs2" || key == "early_inputs") { if (key == "early_inputs3") options.early_inputs = value != "0"; }
+      else if (key == "early_inputs3" || key == "early_inputs2" || key == "early_inputs" || key == "late_read") {
+        if (key == "early_inputs3") options.early_inputs = value != "0";
+        else if (key == "late_read") options.online_late_read = value == "1";
+      }
       else if (key == "performance") options.performance_overlay = value == "1";
       else if (key == "showfps") { options.show_fps = value == "1"; showfps_seen = true; }
       // showfps_yougame2: builds before 10-31 saved showfps_yougame 1 on every save (the old default),
       // so a new key lets every player start from today's default (off; on for agent runs) once.
       else if (key == "showfps_yougame2") saved_showfps_yougame = value == "1";
-      else if (key == "showvram") options.show_vram = value == "1";
-      else if (key == "showping") options.show_ping = value == "1";
+      else if (key == "showvram" || key == "showclock") (key == "showvram" ? options.show_vram : options.show_clock) = value == "1";
+      else if (key == "showping" || key == "liveping") (key == "showping" ? options.show_ping : options.live_ping) = value == "1";
       else if (key == "netoverlay") net_overlay::set_enabled(value == "1");
       // Diagnostic, off unless someone is hunting a one-frame glitch: see RenderOptions::flicker_scan.
       // Settings-file only rather than a control in the panel, because it costs a readback on every
@@ -2628,7 +2639,8 @@ void load_pc_settings(RenderOptions& options, int& volume) {
       else if (key == "cpu_20xx") options.cpu_20xx = value == "1";
       else if (key == "freeze_fd") options.freeze_fd = value == "1";
       else if (key == "hide_ko_explosions") options.hide_ko_explosions = value == "1";
-      else if (key == "hide_hud_emblems") options.hide_hud_emblems = value == "1";
+      else if (key == "hide_hud_emblems" || key == "hide_percents")
+        (key == "hide_percents" ? options.hide_percents : options.hide_hud_emblems) = value == "1";
       else if (key == "proaistronger") options.pro_ai_stronger = std::clamp(std::atoi(value.c_str()), 0, 2);
       else if (key == "community_codes") options.community_codes = (uint32_t)std::strtoul(value.c_str(), nullptr, 16) & (MU_DISPLAY_OPTION_CODES_ALL | MU_DISPLAY_OPTION_OFFLINE_CODES);
       else if (key == "unlock_all") options.unlock_all = value != "0";
@@ -2921,6 +2933,7 @@ void load_pc_settings(RenderOptions& options, int& volume) {
   host::g_freeze_fd.store(options.freeze_fd, std::memory_order_relaxed);
   host::g_hide_ko_explosions.store(options.hide_ko_explosions, std::memory_order_relaxed);
   host::g_hide_hud_emblems.store(options.hide_hud_emblems, std::memory_order_relaxed);
+  gx::set_hide_percents(options.hide_percents);
   host::g_community_codes.store(options.community_codes, std::memory_order_relaxed);
   phillip_ai::set_stronger_choice(options.pro_ai_stronger);
   host::settings_shortcut::practice_chord().store((uint16_t)options.practice_chord, std::memory_order_relaxed);
@@ -2936,6 +2949,7 @@ void load_pc_settings(RenderOptions& options, int& volume) {
   if (!offline_delay_frames_seen) options.offline_delay_frames = slippi::online::config().delay;
   RenderOptions::live_offline_delay_frames() = options.offline_delay_frames;
   host::early_input::set_enabled(options.early_inputs);
+  host::late_read::set_enabled(options.online_late_read);
 #ifndef MELEE_NO_SLIPPI
   RenderOptions::live_slippi_spectator() = options.slippi_spectator;
   RenderOptions::live_slippi_spectator_port() = options.slippi_spectator_port;
@@ -4657,7 +4671,29 @@ static void draw_search_keep(RenderOptions& options, const slippi::native_practi
   static practice_menu::SearchBanner last;
   static double gone_at = -1.0;
   const double now = ImGui::GetTime();
-  if (k.stage == 1 || k.stage == 2) {
+  // A search started from Training's own menu shows the same banner (owner 11-24: the default banner at
+  // the top, not the menu look's old bar).
+  static double training_search_since = -1.0;
+  const bool training_search = k.stage == 0 && practice.phase == slippi::native_practice::Phase::Searching;
+  if (!training_search) training_search_since = -1.0;
+  else if (training_search_since < 0.0) training_search_since = now;
+  if (training_search) {
+    using slippi::native_practice::MatchMode;
+    practice_menu::SearchBanner b;
+    b.stage = 1;
+    b.service = yougame::session() ? "YouGame" : "Slippi";
+    b.mode = practice.mode == MatchMode::Direct && yougame::session() ? std::string("Friends")
+                                                                        : std::string(slippi::native_practice::match_mode_name(practice.mode));
+    b.elapsed_ms = (uint32_t)((uint64_t)practice.search_ticks * 1000 / 60);
+    b.shown_ms = (uint32_t)((now - training_search_since) * 1000.0);
+    b.clock_ms = (uint32_t)(now * 1000.0);
+    b.look = std::clamp(RenderOptions::live_search_banner(), 0, practice_menu::kSearchBannerLooks - 1);
+    b.scene_major = practice.scene_major;
+    b.scene_minor = practice.scene_minor;
+    last = b;
+    gone_at = -1.0;
+    practice_menu::draw_search_banner(b, screen.x, screen.y, x0, y0, x1, y1);
+  } else if (k.stage == 1 || k.stage == 2) {
     practice_menu::SearchBanner b;
     b.stage = k.stage;
     b.service = k.service;
@@ -5213,7 +5249,7 @@ static bool write_settings_file_impl(const SettingsState& state, const RenderOpt
        << "\nshowfps " << (g_display_keys.yougame ? g_display_keys.show_fps : options.show_fps)
        << (g_display_keys.yougame ? std::string("\nshowfps_yougame2 ") + (options.show_fps ? "1" : "0")
            : g_display_keys.saved_showfps_yougame >= 0 ? "\nshowfps_yougame2 " + std::to_string(g_display_keys.saved_showfps_yougame) : std::string())
-       << "\nshowvram " << (options.show_vram ? 1 : 0) << "\nshowping " << options.show_ping
+       << "\nshowvram " << (options.show_vram ? 1 : 0) << "\nshowping " << options.show_ping << "\nliveping " << (options.live_ping ? 1 : 0) << "\nshowclock " << (options.show_clock ? 1 : 0)
        << "\nnetoverlay " << (net_overlay::enabled() ? 1 : 0)
        << "\ndlss " << options.dlss_mode << "\nframegen " << options.frame_generation_mode
        << "\nfgmax " << options.fg_cached_max << "\nfgdynamic " << (options.fg_cached_dynamic ? 1 : 0)
@@ -5257,7 +5293,7 @@ static bool write_settings_file_impl(const SettingsState& state, const RenderOpt
        << "\nonlinedelayauto " << (slippi::online::config().auto_delay ? 1 : 0)
        << "\noffline_delay " << (options.offline_delay ? 1 : 0)
        << "\noffline_delay_frames " << options.offline_delay_frames
-       << "\nearly_inputs3 " << (options.early_inputs ? 1 : 0)
+       << "\nearly_inputs3 " << (options.early_inputs ? 1 : 0) << "\nlate_read " << (options.online_late_read ? 1 : 0)
        << "\nquickchat " << slippi::online::config().chat
        << "\ndirectpause " << (slippi::online::config().direct_pause ? 1 : 0)
        << "\nportcolour1 " << slippi::online::config().port_colour[0]
@@ -5360,6 +5396,7 @@ static bool write_settings_file_impl(const SettingsState& state, const RenderOpt
        << "\nfreeze_fd " << (options.freeze_fd ? 1 : 0)
        << "\nhide_ko_explosions " << (options.hide_ko_explosions ? 1 : 0)
        << "\nhide_hud_emblems " << (options.hide_hud_emblems ? 1 : 0)
+       << "\nhide_percents " << (options.hide_percents ? 1 : 0)
        << "\ncommunity_codes " << std::hex << options.community_codes << std::dec
        << "\nproaistronger " << options.pro_ai_stronger
        << "\nproaireaction " << options.pro_ai_extra_delay
@@ -7584,7 +7621,9 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
             ImGui::TextDisabled("%s download", card.size);
             if (!s.message.empty()) ImGui::TextWrapped("%s", s.message.c_str());
           }
-#ifdef _WIN32
+          // Linux too (owner 11-24: the settings look the same as on Windows): the compat ShellExecuteA opens
+          // the page with xdg-open.
+#if defined(_WIN32) || defined(__linux__)
           if (settings_widgets::SmallButton("Authors' page")) ShellExecuteA(nullptr, "open", card.page, nullptr, nullptr, SW_SHOWNORMAL);
 #endif
           ImGui::PopID();
@@ -7738,7 +7777,8 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
           restart_now_button("look_pack");
       }
       settings_widgets::InputText("Patch folder##exactlooks", patcher_folder, sizeof patcher_folder);
-#ifdef _WIN32
+      // Linux too: the compat GetOpenFileNameW is zenity's or kdialog's file picker.
+#if defined(_WIN32) || defined(__linux__)
       ImGui::SameLine();
       if (settings_widgets::Button("Browse...##lookpatch")) {
         wchar_t path[32768]{};
@@ -10625,6 +10665,33 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
                             "CPU. Two CPU ports set to pros fight each other. Offline VS only: never online, in\n"
                             "Unranked or Ranked.");
       }
+      // The stronger policies were only offered in Training's Fight a pro, so VS pros stayed on the base one
+      // (owner 11-24). The same choice as Training's, one row.
+      {
+        // On: every stronger policy is downloaded once (kept in ProAI\\) and plays from then on. Off: the base
+        // ones. "Ask" (a settings file from before, Training's question not answered) shows as on once all are here.
+        static phillip_ai::StrongerStatus st;
+        static double st_at = -10.0;
+        if (ImGui::GetTime() - st_at > 1.0) { st = phillip_ai::stronger_status(-1); st_at = ImGui::GetTime(); }
+        const int choice = options.pro_ai_stronger;
+        bool on = choice == phillip_ai::kStrongerAlways || (choice == phillip_ai::kStrongerAsk && st.total > 0 && st.missing == 0);
+        if (settings_toggle("Stronger Pro AI", &on)) {
+          options.pro_ai_stronger = on ? phillip_ai::kStrongerAlways : phillip_ai::kStrongerNever;
+          phillip_ai::set_stronger_choice(options.pro_ai_stronger);
+          if (on) phillip_ai::download_stronger(-1);
+          st_at = -10.0;
+          changed = true;
+        }
+        if (ImGui::IsItemHovered())
+          ImGui::SetTooltip("The pros play Phillip's newest, much stronger AI, in VS Mode and Training.\n"
+                            "Downloaded once (about 90 MB each), kept, and used every match after that.\n"
+                            "A PC too slow for them keeps the regular ones.");
+        ImGui::SameLine();
+        if (!on) ImGui::TextDisabled("regular pros");
+        else if (st.downloading) ImGui::TextDisabled("downloading...");
+        else if (st.missing) ImGui::TextDisabled("%.0f MB to download", st.missing_mb);
+        else ImGui::TextDisabled("downloaded");
+      }
     }
     if (settings_toggle("Show results screen", &options.results_screen)) {
       RenderOptions::live_results_screen() = options.results_screen;
@@ -10670,8 +10737,10 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
       for (int port = 0; port < 4; ++port) shield_row(ports[port], &options.shield_color[port], port);
       ImGui::Separator();
       shield_row("Online (you)", &options.shield_color_online, 0);
-      settings_hint("Your shield and KO blast colours. Online, \"Online (you)\" is yours (left empty, your P1 colour): players"
-                    " on Melee Unlocked see it, players on Slippi Dolphin see your port colour. Team matches keep team colours.");
+      settings_hint("Your shield and KO blast colours, in every match, team matches included. Online, \"Online (you)\" is"
+                    " yours (left empty, your P1 colour): everyone on Melee Unlocked sees it, Slippi Dolphin players see the"
+                    " port colour. Players who never chose one show the usual port or team colour. On the Static Recomp,"
+                    " team matches keep team colours.");
       ImGui::Unindent(8.0f);
     }
     // Input delay, Online and Discord sit here, right below the game's own switches (owner, 0.9.201);
@@ -10704,12 +10773,21 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
       }
       if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Applies from the next online match. Higher delay can reduce rollbacks.\n"
-                          "Auto picks 2 to 6 frames from ping at match start and holds it for that match.\n"
+                          "Auto picks 2 to 4 frames from ping at match start and holds it for that match.\n"
                           "Without a ping measurement, Auto uses the last manual online value (%d frames).",
                           slippi::online::config().delay);
       if (online == 1)
         ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.25f, 1.0f),
                            "1 frame online can cause more rollbacks: fighters may jump or stutter.");
+      if (settings_toggle("Variable online delay", &options.online_late_read)) {
+        host::late_read::set_enabled(options.online_late_read);
+        changed = true;
+      }
+      if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Off: every online match plays at the delay above, the same timing whatever the ping.\n"
+                          "On: in 1v1 with a low ping and a PC with room, the game plays one frame less than\n"
+                          "that delay, so presses show sooner; the delay can then differ from match to match.\n"
+                          "Takes effect from the next online match.");
 #endif
       ImGui::TextDisabled("Added input delay, not total controller-to-screen latency.");
     }
@@ -11236,13 +11314,22 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
       ImGui::SetTooltip("No burst of colour when a fighter is KO'd off the side, top or bottom.\n"
                         "The match is exactly the same, so it also works online and in replays.\n"
                         "Picture only, yours alone. Both engines. Takes effect from the next KO.");
-    if (settings_toggle("Hide emblems behind percents", &options.hide_hud_emblems)) {
-      host::g_hide_hud_emblems.store(options.hide_hud_emblems, std::memory_order_relaxed);
-      changed = true;
+    {
+      // One row (owner 11-24: no more rows): the emblem switch, and UnclePunch's Hide HUD as "Hidden".
+      static const char* const kPercents[] = {"Shown", "Without emblems", "Hidden"};
+      int percents = options.hide_percents ? 2 : options.hide_hud_emblems ? 1 : 0;
+      if (settings_combo("Damage percents", &percents, kPercents, 3)) {
+        options.hide_hud_emblems = percents == 1;
+        options.hide_percents = percents == 2;
+        host::g_hide_hud_emblems.store(options.hide_hud_emblems, std::memory_order_relaxed);
+        gx::set_hide_percents(options.hide_percents);
+        changed = true;
+      }
+      if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Without emblems: no character emblem behind each player's damage percent (both engines).\n"
+                          "Hidden: no damage percents at all, as UnclePunch's Hide HUD code (Source Port).\n"
+                          "Picture only, yours alone: the match is the same, online and in replays too.");
     }
-    if (ImGui::IsItemHovered())
-      ImGui::SetTooltip("No character emblem behind each player's damage percent.\n"
-                        "Picture only, yours alone: the match is the same, online and in replays too. Both engines.");
 
     // Community codes: players' favourite Gecko codes, built in (shim/mu_code_features.c). Picture and
     // sound only, so each is yours alone, online and in replays too.
@@ -11684,8 +11771,11 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
       ImGui::Spacing();
     }
     if (cur_family.fam == (int)host::PadFamily::Box)
-      settings_hint("Mod X and Mod Y work inside the box itself and are never bound here. A Frame1 plugged in "
-                    "normally shows up as a GameCube adapter: set it up under GameCube.");
+      // K-Dubb 11-24: "set it up under GameCube" sent a Frame1 owner looking for a section that does not exist; his box
+      // is set up in Box layouts, below.
+      settings_hint("Mod X and Mod Y work inside the box itself and are never bound here. This box's buttons, triggers "
+                    "included, are set under Box layouts below. A Frame1 in its GameCube mode shows up as a GameCube "
+                    "adapter instead: then choose GameCube with Change at the top.");
     if (cur_family.fam == (int)host::PadFamily::GameCube) {
       const double rate = host::gcadapter_poll_rate_hz();
       if (rate > 0.0) ImGui::Text("Adapter polling rate: %.0f Hz", rate);
@@ -12105,8 +12195,20 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
 #endif
     changed |= settings_toggle("Performance overlay", &options.performance_overlay);
     changed |= settings_toggle("FPS counter (top left)", &options.show_fps);
+    changed |= settings_toggle("Clock (under the FPS)", &options.show_clock);
+    if (ImGui::IsItemHovered())
+      ImGui::SetTooltip("The time of day in the top left corner, as Slippi Dolphin's clock shows it.");
     // VRAM has its own line in the Video tab, right by the settings that move it; no overlay needed.
-    changed |= settings_toggle("Ping while online (under the FPS)", &options.show_ping);
+    {
+      // One row (owner 11-24: no more rows): off, the ping held a second at a time, or every reading.
+      static const char* const kPing[] = {"Off", "Once a second", "Live"};
+      int ping = !options.show_ping ? 0 : options.live_ping ? 2 : 1;
+      if (settings_combo("Ping while online (under the FPS)", &ping, kPing, 3)) {
+        options.show_ping = ping != 0;
+        if (ping) options.live_ping = ping == 2;
+        changed = true;
+      }
+    }
     {
       bool net = net_overlay::enabled();
       if (settings_toggle("Network and timing", &net)) { net_overlay::set_enabled(net); changed = true; }
@@ -12728,12 +12830,12 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
     if (test_readout) { options.show_fps = true; options.show_ping = true; options.performance_overlay = true; }
     const bool ping_line = options.show_ping && (slippi::online::is_online_match() || test_readout);
     const float line_h = ImGui::GetTextLineHeight() + 2.0f;
-    const float readout_h = 8.0f + line_h * 4;       // room for every line, so the graph never moves
+    const float readout_h = 8.0f + line_h * 5;       // room for every line, so the graph never moves
     const bool latency_line = options.reflex_stats && streamline::reflex_latency_ms() > 0.0f;
     float vram_used = 0, vram_total = 0;
     const bool vram_line = options.show_vram && vram_usage(&vram_used, &vram_total);
-    if ((options.show_fps || ping_line || latency_line || vram_line) && !clean_replay) {
-      char lines[4][40];
+    if ((options.show_fps || options.show_clock || ping_line || latency_line || vram_line) && !clean_replay) {
+      char lines[5][40];
       int n = 0;
       if (options.show_fps) {
         // Frames shown, and the game's own rate when it falls short of 60 (the frames shown can be many
@@ -12744,9 +12846,30 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
         else
           std::snprintf(lines[n++], sizeof lines[0], "FPS: %.0f", ImGui::GetIO().Framerate);
       }
+      if (options.show_clock) {
+        // Slippi Dolphin's OSD clock (RenderBase.cpp, bShowOSDClock): std::put_time(localtime, "%X"), which in
+        // the C locale is HH:MM:SS, on the cyan text right under the FPS.
+        const std::time_t now = std::time(nullptr);
+        std::tm local{};
+#ifdef _WIN32
+        localtime_s(&local, &now);
+#else
+        localtime_r(&now, &local);
+#endif
+        std::strftime(lines[n++], sizeof lines[0], "%H:%M:%S", &local);
+      }
       if (ping_line) {
-        // Teams: each other player's ping, in port order, as Slippi shows them.
-        const std::vector<int> pings = slippi::online::remote_pings_ms();
+        // Teams: each other player's ping, in port order, as Slippi shows them. The numbers are read once a
+        // second and held (lemon / owner 11-24: they changed several times a second and could not be read).
+        static std::vector<int> pings;
+        static int single_ping = 0;
+        static double read_at = -1.0;
+        const double now = ImGui::GetTime();
+        if (options.live_ping || read_at < 0.0 || now - read_at >= 1.0 || now < read_at) {
+          pings = slippi::online::remote_pings_ms();
+          single_ping = slippi::online::ping_ms();
+          read_at = now;
+        }
         if (pings.size() > 1) {
           int used = std::snprintf(lines[n], sizeof lines[0], "Ping:");
           for (size_t i = 0; i < pings.size() && used > 0 && used < (int)sizeof lines[0]; ++i)
@@ -12754,12 +12877,12 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
           if (used > 0 && used < (int)sizeof lines[0]) std::snprintf(lines[n] + used, sizeof lines[0] - used, " ms");
           ++n;
         } else {
-          std::snprintf(lines[n++], sizeof lines[0], "Ping: %d ms", slippi::online::ping_ms());
+          std::snprintf(lines[n++], sizeof lines[0], "Ping: %d ms", single_ping);
         }
       }
-      if (options.reflex_stats && streamline::reflex_latency_ms() > 0.0f && n < 3)
+      if (options.reflex_stats && streamline::reflex_latency_ms() > 0.0f && n < 4)
         std::snprintf(lines[n++], sizeof lines[0], "Render latency: %.1f ms", streamline::reflex_latency_ms());
-      if (vram_line) std::snprintf(lines[n++], sizeof lines[0], "VRAM: %.1f / %.1f GB", vram_used, vram_total);
+      if (vram_line && n < 5) std::snprintf(lines[n++], sizeof lines[0], "VRAM: %.1f / %.1f GB", vram_used, vram_total);
       const OverlayBounds bounds = overlay_bounds();
       ImVec2 at(bounds.left + 10, bounds.top + 8);
       float wide = 0;

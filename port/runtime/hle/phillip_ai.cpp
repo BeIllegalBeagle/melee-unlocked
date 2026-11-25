@@ -106,6 +106,37 @@ bool cpu_has_avx() {
 #endif
 }
 
+#ifndef _WIN32
+// Whether an ELF library file holds all it says it has: every loadable segment and the section table.
+// dlopen of a cut-short file (an interrupted download or extraction) maps pages past its end and the
+// process dies with a bus error (Linux report 11-24, B-1423): checked first, so Fight a pro is off instead.
+bool elf_complete(const std::string& path, std::string* why) {
+  std::ifstream f(path, std::ios::binary);
+  if (!f) { *why = "missing"; return false; }
+  f.seekg(0, std::ios::end);
+  const uint64_t size = (uint64_t)f.tellg();
+  unsigned char h[64] = {};
+  f.seekg(0);
+  if (size < 64 || !f.read((char*)h, 64) || h[0] != 0x7F || h[1] != 'E' || h[2] != 'L' || h[3] != 'F' || h[4] != 2 || h[5] != 1) {
+    *why = "not a 64-bit ELF library"; return false;
+  }
+  auto u16 = [](const unsigned char* p) { return (uint64_t)p[0] | (uint64_t)p[1] << 8; };
+  auto u64 = [](const unsigned char* p) { uint64_t v = 0; for (int i = 7; i >= 0; --i) v = v << 8 | p[i]; return v; };
+  const uint64_t phoff = u64(h + 0x20), shoff = u64(h + 0x28), phent = u16(h + 0x36), phnum = u16(h + 0x38);
+  const uint64_t shent = u16(h + 0x3A), shnum = u16(h + 0x3C);
+  if (phent < 56 || phoff + phent * phnum > size) { *why = "its program headers are cut off"; return false; }
+  if (shoff && shoff + shent * shnum > size) { *why = "it is cut short"; return false; }
+  for (uint64_t i = 0; i < phnum; ++i) {
+    unsigned char p[56] = {};
+    f.seekg((std::streamoff)(phoff + i * phent));
+    if (!f.read((char*)p, 56)) { *why = "unreadable"; return false; }
+    const uint64_t type = (uint64_t)p[0] | (uint64_t)p[1] << 8 | (uint64_t)p[2] << 16 | (uint64_t)p[3] << 24;
+    if (type == 1 && u64(p + 0x08) + u64(p + 0x20) > size) { *why = "it is cut short"; return false; }   // PT_LOAD
+  }
+  return true;
+}
+#endif
+
 bool runtime_ready() {
   if (g_runtime) return g_runtime == 1;
   g_runtime = -1;
@@ -119,8 +150,14 @@ bool runtime_ready() {
 #else
   // The Linux package keeps its libraries in lib/ beside the game.
   std::string path = exe_dir() + "lib/libonnxruntime.so";
+  if (!std::ifstream(path, std::ios::binary)) path = exe_dir() + "libonnxruntime.so";
+  std::string damage;
+  if (std::ifstream(path, std::ios::binary) && !elf_complete(path, &damage)) {
+    host::log("pro ai: %s is damaged (%s); Fight a pro is off. Download Melee Unlocked again and extract all of it.",
+              path.c_str(), damage.c_str());
+    return false;
+  }
   void* dll = dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
-  if (!dll) dll = dlopen((path = exe_dir() + "libonnxruntime.so").c_str(), RTLD_NOW | RTLD_LOCAL);
   using GetBase = const OrtApiBase* (*)();
   GetBase get_base = dll ? reinterpret_cast<GetBase>(dlsym(dll, "OrtGetApiBase")) : nullptr;
 #endif
@@ -238,6 +275,7 @@ std::set<std::string> g_fetch_tried;
 std::set<std::string> g_fetch_pending;
 struct Fetch { std::string url, sha, file, dest; };
 std::deque<Fetch> g_fetch_queue;
+std::atomic<int> g_installed{0};   // policies installed since the game started
 
 void fetch_worker() {
   for (;;) {
@@ -250,7 +288,10 @@ void fetch_worker() {
     }
     host::log("pro ai: downloading %s", f.file.c_str());
     std::string why;
-    if (host::updater::fetch_verified(f.url, f.sha, f.dest, &why)) host::log("pro ai: %s installed; it plays from the next match", f.file.c_str());
+    if (host::updater::fetch_verified(f.url, f.sha, f.dest, &why)) {
+      host::log("pro ai: %s installed; it plays from the next match", f.file.c_str());
+      g_installed.fetch_add(1);
+    }
     else host::log("pro ai: %s not downloaded (%s); the character's own policy plays", f.file.c_str(), why.c_str());
     std::lock_guard<std::mutex> lk(g_fetch_mutex);
     g_fetch_pending.erase(f.file);
@@ -280,6 +321,11 @@ void fetch_later(const Entry& e, bool retry = false) {
 
 std::atomic<int> g_stronger{kStrongerAsk};
 std::atomic<int> g_extra_delay{0};   // set_extra_delay
+std::atomic<int> g_slot_delay[4] = {-1, -1, -1, -1};   // set_slot_extra_delay: a seat's level
+int extra_for(unsigned slot) {
+  const int own = slot < 4 ? g_slot_delay[slot].load() : -1;
+  return std::clamp(own >= 0 ? own : g_extra_delay.load(), 0, kMaxExtraDelay);
+}
 
 // Phillip's newest policies (90 MB) need about 10 ms a step: a PC plays them only once a background
 // check shows it steps one fast enough (0 not known, 1 fast enough, -1 too slow). Until then, and on
@@ -1043,7 +1089,7 @@ bool act(const MuGhostObs& o, MuGhostAct& out) {
   MuGhostAct a{};
   // Its own delay plus the player's extra reaction time. Answers are kept for the longest extra, so
   // raising it mid-match finds the older answers it now needs instead of waiting for them.
-  const uint32_t delay = (uint32_t)(s.entry->delay + std::clamp(g_extra_delay.load(), 0, kMaxExtraDelay));
+  const uint32_t delay = (uint32_t)(s.entry->delay + extra_for(o.slot));
   if (o.frame - s.first >= delay) {
     const uint32_t due = o.frame - delay;
     std::unique_lock<std::mutex> lk2(s.m);
@@ -1062,6 +1108,9 @@ bool act(const MuGhostObs& o, MuGhostAct& out) {
 
 void set_stronger_choice(int choice) { g_stronger = std::clamp(choice, 0, 2); }
 void set_extra_delay(int frames) { g_extra_delay = std::clamp(frames, 0, kMaxExtraDelay); }
+void set_slot_extra_delay(int slot, int frames) {
+  if (slot >= 0 && slot < 4) g_slot_delay[slot] = frames < 0 ? -1 : std::clamp(frames, 0, kMaxExtraDelay);
+}
 int extra_delay() { return g_extra_delay.load(); }
 int stronger_choice() { return g_stronger.load(); }
 
@@ -1081,6 +1130,8 @@ StrongerStatus stronger_status(int pro) {
   s.downloading = g_fetching.load();
   return s;
 }
+
+int installed_this_session() { return g_installed.load(); }
 
 void download_stronger(int pro) {
   std::lock_guard<std::mutex> catalog_lock(g_mutex);

@@ -4813,18 +4813,23 @@ Match find_match(const Search& search, const std::function<bool()>& cancel_reque
               search.direct_code.empty() ? "none" : "set", search.friend_room.empty() ? "none" : "set");
     return fail(lobby::kSearchRefused);
   }
-  // An arena game: 2 or 4 different fighters, found in the arena's own room, never a code, invite or lobby.
+  // An arena game: 2 to 4 different fighters (3 only in a free-for-all), found in the arena's own room,
+  // never a code, invite or lobby.
   const bool arena = !search.arena_fighters.empty();
   if (arena) {
     const auto& f = search.arena_fighters;
     const bool distinct = std::set<std::string>(f.begin(), f.end()).size() == f.size() &&
                           std::none_of(f.begin(), f.end(), [](const std::string& id) { return id.empty(); });
-    if ((f.size() != 2 && f.size() != 4) || !distinct || search.friends_lobby || !search.friend_room.empty() ||
+    if (f.size() < 2 || f.size() > 4 || !distinct || search.friends_lobby || !search.friend_room.empty() ||
         !search.direct_code.empty() || search.mode == 0) {
       host::log("arena: search refused (%zu fighters, mode %d)", f.size(), (int)search.mode);
       return fail("The arena could not start this game");
     }
   }
+  // An arena game with Pro AIs (slippi_arena.cpp make_plan, set as the code match plan): its people sit at their
+  // setup ports, and each Pro AI plays on its owner's machine as that machine's next port (CMD_PROAI_SEAT).
+  const std::shared_ptr<const lobby::Plan> arena_plan = arena ? code_plan_now() : nullptr;
+  if (arena_plan) host::log("arena: a setup with Pro AIs (%d ports, %d machines)", arena_plan->ports, arena_plan->machines);
   try {
   struct FriendSearch {
     explicit FriendSearch(bool active) {
@@ -4934,7 +4939,7 @@ Match find_match(const Search& search, const std::function<bool()>& cancel_reque
   } lobby_search(lobby_match);
   const bool friends_mode = !team_code && !lobby_match && (!search.friend_room.empty());
   const bool direct = search.mode == 2 && !lobby_match && !arena;
-  const int size = arena ? (int)search.arena_fighters.size() : lobby_match || search.mode == 3 ? 4 : 2;
+  const int size = arena ? (arena_plan ? 4 : (int)search.arena_fighters.size()) : lobby_match || search.mode == 3 ? 4 : 2;
   const json lobby = {{"version", 1}, {"minPlayers", size}, {"maxLocalPlayers", 1}, {"compatibility", compat}};
   json request = {{"type", "mpTicket"}, {"players", size}, {"mode", size == 4 ? "teams" : "singles"}, {"lobby", lobby}, {"ranked", search.mode == 0}};
 #if MU_SQUAD
@@ -4966,7 +4971,7 @@ Match find_match(const Search& search, const std::function<bool()>& cancel_reque
   if (lobby_route) request = json::object();   // set with the ticket below (lobby_hold or lobby_ticket)
   // The queue's ticket admits this player to the match room; a renewal there asks for a match-admission
   // ticket (Teams, teamsLobby 1, 4 players, casual, the same key; no room, party or partySearch).
-  if (doubles_room) request = friends::doubles_match_ticket(lobby_key);
+  if (doubles_room) request = friends::doubles_match_ticket(lobby_key, search.doubles_match.ranked);
 #ifdef MELEE_DOUBLES
   if (doubles_match) request = doubles::ticket(compat, team_room, 4);
   else
@@ -5544,6 +5549,7 @@ Match find_match(const Search& search, const std::function<bool()>& cancel_reque
   // socket for it, and the match room matchmaking names. The match room: when this search reached it, and
   // its room reports.
   lobby::DoublesParty party;
+  bool queue_ranked = false;   // the queue this home's running search is in
   std::unique_ptr<Socket> queue_socket;
   std::string queue_generation, queue_url, queue_pass, matched_room;
   const uint64_t doubles_since = now_ms();
@@ -5555,6 +5561,22 @@ Match find_match(const Search& search, const std::function<bool()>& cancel_reque
   // seat in the roster where it knows; the seat's word says it everywhere else. Either way the whole match
   // plays over own UDP, every seat alike (decide_transport).
   std::set<std::string> no_links;
+  // An arena game starts in the room everyone is already in: its roster as the arena's pump last read it, or the
+  // search waits for a roster change that may never come (11-23 production: both fighters seated, never "full").
+  if (adopted && arena) {
+    {
+      std::lock_guard<std::mutex> lock(g_mutex);
+      participants = room->participants;
+    }
+    // The arena's own copy (arena_intercept keeps it from every roster the room sends) when the pump's is empty.
+    std::lock_guard<std::mutex> lock(g_arena_link.mutex);
+    if ((!participants.is_array() || participants.empty()) && g_arena_link.roster.is_array()) participants = g_arena_link.roster;
+    // This player's connection, as the room's welcome named it to the arena (arena_intercept): the search finds
+    // its own seat by it.
+    if (room->me.empty()) room->me = g_arena_link.me;
+    host::log("arena: the game starts with the room's %zu seats (this player %s)", participants.is_array() ? participants.size() : (size_t)0,
+              room->me.empty() ? "unknown" : "known");
+  }
   if (adopted && !arena) {
     lobby_session = std::move(room->lobby_session);
     lobby_me = std::move(room->lobby_me);
@@ -5723,6 +5745,7 @@ Match find_match(const Search& search, const std::function<bool()>& cancel_reque
                       ranked::log_text(lobby_me, 12).c_str(), ranked::log_text(room->me, 12).c_str());
             lobby::Session::Options o;
             o.me = lobby_me; o.connection_id = room->me; o.profile = lobby_profile;
+            o.ranked = doubles_home && search.lobby_control && search.lobby_control->ranked_choice();
             // The Doubles match room takes only the setup: no hello (the home sent it), nothing to call off.
             if (!doubles_room) {
               o.settings_digest = lobby_settings; o.card_digest = lobby_card;
@@ -5874,7 +5897,7 @@ Match find_match(const Search& search, const std::function<bool()>& cancel_reque
         if (!doubles_epoch) doubles_epoch = lobby::next_room_epoch();
         try {
           bridge(lobby::doubles_room_report(room_code, search.doubles_match.home, true, doubles_epoch, room->participants,
-                                            lobby_me, room->revision, lobby_plan != nullptr), 1000);
+                                            lobby_me, room->revision, lobby_plan != nullptr, search.doubles_match.ranked), 1000);
         } catch (const update::Required&) { throw; } catch (...) {}
       }
       if (!lobby_plan && now_ms() - doubles_since > lobby::kDoublesSetupMs) {
@@ -5920,7 +5943,9 @@ Match find_match(const Search& search, const std::function<bool()>& cancel_reque
         if (lobby_session->searching() && !queue_socket && !party.generation.empty() && party.generation != queue_generation) {
           queue_generation = party.generation;
           try {
-            const json queue_request = friends::doubles_queue_ticket(lobby_key, room_code, queue_generation, lobby_session->owns_local() ? 1 : party.humans);
+            queue_ranked = lobby_session->ranked();
+            const json queue_request = friends::doubles_queue_ticket(lobby_key, room_code, queue_generation,
+                                                                     lobby_session->owns_local() ? 1 : party.humans, queue_ranked);
             const json qt = ticket_bridge(queue_request, 15000);
             queue_url = qt.value("url", "");
             queue_pass = qt.value("ticket", "");
@@ -5930,7 +5955,7 @@ Match find_match(const Search& search, const std::function<bool()>& cancel_reque
               throw std::runtime_error("YouGame did not return a Doubles search ticket");
             if (!qs->open_session(queue_url, queue_pass, "", &queue_error, 10000, cancelled)) throw std::runtime_error(queue_error);
             queue_socket = std::move(qs);
-            host::log("doubles: searching for %s", party.humans == 2 ? "opponents" : "a team");
+            host::log("doubles: searching for %s (%s)", party.humans == 2 ? "opponents" : "a team", queue_ranked ? "ranked" : "unranked");
           } catch (const update::Required&) { throw; }
           catch (const std::exception& e) {
             if (cancelled()) return fail("Cancelled");
@@ -5987,6 +6012,7 @@ Match find_match(const Search& search, const std::function<bool()>& cancel_reque
           next.doubles_match.ticket = queue_pass;
           next.doubles_match.room = matched_room;
           next.doubles_match.home = room_code;
+          next.doubles_match.ranked = queue_ranked;
           lobby_leave.handed_off = true;
           room->lobby_session = std::move(lobby_session);
           room->lobby_me = lobby_me;
@@ -6028,7 +6054,20 @@ Match find_match(const Search& search, const std::function<bool()>& cancel_reque
       }
     }
     if (lobby_match) lobby_view = lobby_plan ? lobby::match_roster(participants, *lobby_plan) : json::array();
-    if (arena) arena_view = transport::arena_roster(participants, search.arena_fighters);
+    if (arena && arena_plan) {
+      // Each person by YouGame id at their setup port (the plan's own connection ids are player ids, not the room's).
+      arena_view = json::array();
+      for (int port = 0; port < arena_plan->ports; ++port) {
+        if (arena_plan->port[port].local_index != 0) continue;
+        const json* found = nullptr;
+        for (const auto& x : participants)
+          if (x.is_object() && x.value("id", "") == arena_plan->port[port].id && x.value("localIndex", 0) == 0) found = &x;
+        if (!found) { arena_view = json::array(); break; }
+        json seat = *found;
+        seat["slot"] = port;
+        arena_view.push_back(std::move(seat));
+      }
+    } else if (arena) arena_view = transport::arena_roster(participants, search.arena_fighters);
     const json& active = lobby_match ? lobby_view : arena ? arena_view : participants;
     const bool full = lobby_match ? (!lobby_view.empty() && transport::connection_seat(lobby_view, room->me) >= 0)
                     : arena ? (!arena_view.empty() && transport::connection_seat(arena_view, room->me) >= 0)
@@ -6040,7 +6079,10 @@ Match find_match(const Search& search, const std::function<bool()>& cancel_reque
       return fail("Your opponent did not arrive", true);
     }
     if (!full) full_since = 0;
-    else if (!full_since) { full_since = now_ms(); set_status("connecting"); }
+    else if (!full_since) {
+      full_since = now_ms(); set_status("connecting");
+      if (arena) host::log("arena: every fighter is seated (%zu): sending addresses", arena_view.size());
+    }
 #ifdef MELEE_DOUBLES
     // The match room holds the four until each says ready for this roster (as the console admission did).
     if (doubles_match) if (auto ready = consent.ready(full)) room->socket->send(*ready);
@@ -6736,9 +6778,23 @@ int invite_state(std::string* error) {
 }
 }  // namespace arena_room
 
+namespace { std::shared_ptr<const lobby::Plan> g_code_plan; }   // set_code_match_plan (guarded by g_mutex)
+void set_code_match_plan(std::shared_ptr<const lobby::Plan> plan) {
+  std::lock_guard<std::mutex> lock(g_mutex);
+  g_code_plan = std::move(plan);
+}
+std::shared_ptr<const lobby::Plan> code_plan_now() {
+  std::lock_guard<std::mutex> lock(g_mutex);
+  return g_code_plan && g_code_plan->ok && g_code_plan->code_match ? g_code_plan : nullptr;
+}
 FriendsLobby friends_lobby() {
   std::lock_guard<std::mutex> lock(g_mutex);
   FriendsLobby out;
+  if ((!g_room || !g_room->lobby) && g_code_plan && g_code_plan->ok) {
+    out.open = true;
+    out.plan = g_code_plan;
+    return out;
+  }
   if (!g_room || !g_room->lobby) return out;
   out.open = true;
   out.plan = g_room->lobby;

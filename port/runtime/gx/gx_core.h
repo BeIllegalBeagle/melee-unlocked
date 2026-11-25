@@ -298,6 +298,8 @@ int presented_test_fill();
 void set_hud_scales(int stocks_percent, int damage_percent, bool pal_stocks);
 // The same sizes for the native game (MuHostApi.hud_scales): stock | damage << 8, percent.
 uint32_t hud_scales_packed();
+// Damage percents: Hidden (Source Port): the players' percents and emblems are not drawn (bit 16 above).
+void set_hide_percents(bool on);
 // "Low poly fighters" (RenderOptions::low_poly_fighters), published the same way: the native game
 // reads it through MuHostApi.display_options, the Static Recomp's parts hook (host.cpp) reads it live.
 void set_low_poly_fighters(bool on);
@@ -564,6 +566,8 @@ inline std::atomic<uint8_t>& arcade_backdrop_slot() { static std::atomic<uint8_t
 // farthest fighter. Melee plays on the z = 0 plane: platforms, ledges and walls sit within a few
 // units of it, scenery is tens to thousands of units back.
 constexpr float kLightweightBackgroundDepth = 60.0f;
+// The Arcade look's grid (mu_arcade.c, stage map tag 0x7F, which no real map gets): never hidden.
+constexpr uint8_t kStageMapGrid = 0x7F;
 
 // The view-space z of a vertex: row 2 of its position matrix (GX keeps model-view matrices).
 inline float lightweight_view_z(const DrawCall& d, const Vertex& v) {
@@ -647,6 +651,7 @@ inline LightweightFilter lightweight_filter(const Frame& f, int level) {
 // (they have an owner or are skinned) never count, nor does anything off the world camera. With no
 // fighter in view (a cut-in, the results walk-off) nothing is skipped.
 inline bool lightweight_background(const LightweightFilter& e, const Frame& f, const DrawCall& d) {
+  if (d.stage_map == kStageMapGrid) return false;
   // Scenery the game itself names (Whispy, Fountain of Dreams' trees, Yoshi's Story's clouds): off
   // whatever its depth, which on those stages is the fighters' own.
   if (e.backdrop_off && e.have_fighters && d.stage_map != 0xFF && (d.stage_map & 0x80) && lightweight_world_draw(e, d)) return true;
@@ -779,6 +784,12 @@ struct Backend {
   virtual bool display_lag(double& seconds, uint64_t& serial) const { (void)seconds; (void)serial; return false; }
   // Tests (MELEE_TEST_SHOWN_TRACE): the moment of the game the next submitted frame shows, host seconds.
   virtual void note_shown_moment(double) {}
+  // The kind of the next submitted frame (0: the first present of a game frame, 1: a repeated one), and
+  // for the latest measured shown frame how long after the moment it shows it reached the screen
+  // (seconds), with its kind and a serial that changes with every measurement. The presentation loop
+  // levels the two kinds with it. False where it is not measured.
+  virtual void note_shown_kind(int) {}
+  virtual bool shown_lag(double& seconds, int& kind, uint64_t& serial) const { (void)seconds; (void)kind; (void)serial; return false; }
   // What the display side reported since the last call (D3D12: DXGI frame statistics), for the
   // "pacing:" line. Called on the render thread.
   virtual std::string display_timing_line() { return "display statistics not available"; }
