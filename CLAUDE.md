@@ -70,7 +70,7 @@ Each build takes a few minutes clean; later runs rebuild only what changed.
   be built with `build_full.py --squad-strike --doubles`. `build_all.sh` does both.
 - Upstream builds the Linux game with GCC 14 (Ubuntu 14.2), and this fork uses GCC 15.2.
   `port/mac/release_parity.py` loads upstream's own Linux release library in the x86-64 host. On
-  1.0.14 it matched both Mac builds exactly on every `parity_*` script that reaches a match.
+  1.0.14, 1.0.19 and 1.0.27 it matched both Mac builds exactly on every `parity_*` script that reaches a match.
   Not yet verified: the Windows build (MinGW GCC 15.3), and real matchmaking against other platforms.
 - The GameCube adapter (Wii U mode) is read through libusb when `../deps/libusb` exists. This is the
   `MELEE_MAC_GC_ADAPTER` path in `port/runtime/host/gc_adapter.cpp`. Like Dolphin, it needs
