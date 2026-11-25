@@ -4,6 +4,7 @@
 // in a match, and capture/load savestates around rollbacks.
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "slippi_agent_lock.h"
+#include "phillip_ai.h"
 #include "test_env.h"
 #include "slippi_online.h"
 #include "slippi_stage_pool.h"
