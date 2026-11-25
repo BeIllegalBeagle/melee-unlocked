@@ -125,17 +125,16 @@ Origin g_rest_origin[4];
 // How far from centre a reading still counts as a stick at rest: real controllers sit within about
 // 30 steps of 128, a held stick is 70 or more away.
 constexpr int kRestStick = 48, kRestTrigger = 64;
-// Takes the neutral point from this report, axis by axis: a stick or trigger clearly held keeps the
-// last neutral taken at rest for that port, or the centre when there is none.
+// Takes the neutral point from this report. When any stick axis or trigger is clearly held (a
+// held stick can sit near centre on its other axis), the whole neutral point stays the last one
+// taken at rest for that port, or the centre when there is none.
 void take_origin(int port, const uint8_t* c) {
   Origin& o = g_origin[port];
-  const Origin& rest = g_rest_origin[port];
-  auto stick = [](uint8_t v, uint8_t prior) { return std::abs((int)v - 128) <= kRestStick ? v : prior; };
-  auto trigger = [](uint8_t v, uint8_t prior) { return v <= kRestTrigger ? v : prior; };
-  o.sx = stick(c[3], rest.sx); o.sy = stick(c[4], rest.sy); o.cx = stick(c[5], rest.cx); o.cy = stick(c[6], rest.cy);
-  o.tl = trigger(c[7], rest.tl); o.tr = trigger(c[8], rest.tr);
+  auto off = [](uint8_t v) { return std::abs((int)v - 128) > kRestStick; };
+  const bool held = off(c[3]) || off(c[4]) || off(c[5]) || off(c[6]) || c[7] > kRestTrigger || c[8] > kRestTrigger;
+  if (held) o = g_rest_origin[port];
+  else { o.sx = c[3]; o.sy = c[4]; o.cx = c[5]; o.cy = c[6]; o.tl = c[7]; o.tr = c[8]; }
   o.set = true;
-  const bool held = o.sx != c[3] || o.sy != c[4] || o.cx != c[5] || o.cy != c[6] || o.tl != c[7] || o.tr != c[8];
   if (!held) g_rest_origin[port] = o;
   if (held)
     log("gc adapter: port %d connected with a stick or trigger held (stick %u,%u c-stick %u,%u triggers %u,%u): "
