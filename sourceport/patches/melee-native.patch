@@ -157197,7 +157197,7 @@ index 4d3dfce69..40115112d 100644
              ip->xDD4_itemVar.clinkmilk.x0 = parent;
              Item_8026AB54(item_gobj, parent, bone);
 diff --git a/src/melee/it/kinds/itcoin.c b/src/melee/it/kinds/itcoin.c
-index 8e0971304..44e3b3e61 100644
+index 8e0971304..d0ef4460b 100644
 --- a/src/melee/it/kinds/itcoin.c
 +++ b/src/melee/it/kinds/itcoin.c
 @@ -1,7 +1,12 @@
@@ -157272,7 +157272,7 @@ index 8e0971304..44e3b3e61 100644
          ip->xDD4_itemVar.coin.x0 = arg2;
          ip->xDD4_itemVar.coin.x4 = arg3;
          ip->xDD4_itemVar.coin.x14 = arg0;
-@@ -430,6 +434,31 @@ Item_GObj* it_802F2094(HSD_GObj* arg0, Vec3* pos, int arg2, int arg3)
+@@ -430,6 +434,32 @@ Item_GObj* it_802F2094(HSD_GObj* arg0, Vec3* pos, int arg2, int arg3)
          it_8027163C(gobj);
          ip->scl = Ground_801C0498();
          ip->scl *= attr->x44;
@@ -157294,6 +157294,7 @@ index 8e0971304..44e3b3e61 100644
 +            root->scl = shown->scl = hidden->scl = NULL;
 +            HSD_JObjAddChild(root, shown);
 +            HSD_JObjAddNext(shown, hidden);
++            HSD_GObjObject_80390ADC(gobj);   /* the slot still says joint, holding NULL */
 +            HSD_GObjObject_80390A70(gobj, HSD_GObj_JObjKind, root);
 +            if (!told) {
 +                told = 1;
