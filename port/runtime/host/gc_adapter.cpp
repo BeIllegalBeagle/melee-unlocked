@@ -985,8 +985,8 @@ void test_script_thread(std::vector<ScriptStep> steps) {
     const auto now = std::chrono::steady_clock::now();
     {
       std::lock_guard<std::mutex> lk(g_mutex);
-      static bool first = true;  // later neutrals come from the reports, as on a real adapter
-      if (first && !g_origin[0].set) { first = false; g_origin[0].set = true; g_origin[0].sx = g_origin[0].sy = g_origin[0].cx = g_origin[0].cy = 128; }
+      // Neutral points come from the reports through take_origin, as on a real adapter.
+      if (!(rep[1] & 0x30)) g_origin[0].set = false; else if (!g_origin[0].set) take_origin(0, rep + 1);
       std::memcpy(g_report, rep, 37);
       g_report_time = now;
       g_have_report = true;
