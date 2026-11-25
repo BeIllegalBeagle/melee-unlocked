@@ -16,9 +16,20 @@
 #pragma once
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstdint>
+#include <cstdlib>
 
 namespace host::late_read {
+
+// "Variable online delay" (settings, Input delay): off unless the player turns it on (owner 11-24: optional,
+// never the default). MELEE_ONLINE_LATE_READ=0/1 overrides the setting (tests).
+inline std::atomic<bool> g_setting{false};
+inline void set_enabled(bool on) { g_setting.store(on, std::memory_order_relaxed); }
+inline bool enabled() {
+  static const int env = [] { const char* v = std::getenv("MELEE_ONLINE_LATE_READ"); return v && *v ? (*v == '0' ? 0 : 1) : -1; }();
+  return env >= 0 ? env == 1 : g_setting.load(std::memory_order_relaxed);
+}
 
 constexpr double kFrameMs = 16.683;     // the game's 59.94 Hz frame
 constexpr double kGuardMs = 6.0;        // every remote pad of the window stays this early

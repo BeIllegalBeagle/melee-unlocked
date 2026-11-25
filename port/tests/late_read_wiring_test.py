@@ -19,7 +19,14 @@ class LateReadWiringTest(unittest.TestCase):
         self.control = source("port/runtime/host/late_read.h")
 
     def test_can_be_turned_off(self):
-        self.assertIn('std::getenv("MELEE_ONLINE_LATE_READ"); return !(v && *v == \'0\');', self.block)
+        # Off unless the player turns on "Variable online delay" (owner 11-24); the env variable overrides it.
+        self.assertIn("static bool enabled() { return host::late_read::enabled(); }", self.block)
+        self.assertIn("inline std::atomic<bool> g_setting{false};", self.control)
+        self.assertIn("return env >= 0 ? env == 1 : g_setting.load(std::memory_order_relaxed);", self.control)
+        self.assertIn("const bool late_on = host::late_read::enabled();", source("port/app/source_p2p.cpp"))
+        settings = source("port/runtime/gx/pc_settings.cpp")
+        self.assertIn('settings_toggle("Variable online delay", &options.online_late_read)', settings)
+        self.assertIn("bool online_late_read = false;", source("port/runtime/gx/render_options.h"))
         self.assertIn("if (!enabled() || !host::game_image || chosen < 2 || !g_netplay) return chosen;", self.block)
 
     def test_only_one_remote_player_and_no_shared_delay(self):

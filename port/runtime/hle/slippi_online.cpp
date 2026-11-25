@@ -871,7 +871,8 @@ static int chosen_delay() {
 // ---------------------------------------------------------------- late controller read
 // host/late_read.h says what it is. Here: the game is given one frame less than the chosen delay when
 // the connection has room, and each frame of that match waits between sending its pad and reading
-// the other player's inputs. 1v1 on the Source Port only. MELEE_ONLINE_LATE_READ=0 turns it off.
+// the other player's inputs. 1v1 on the Source Port only. Off unless the player turns on "Variable online
+// delay" (owner 11-24: optional, never the default); MELEE_ONLINE_LATE_READ=0/1 overrides it (tests).
 namespace late_read {
 using namespace host::late_read;
 struct Latch { const void* connection = nullptr; int base = 0; bool on = false; };
@@ -881,10 +882,7 @@ static bool engaged = false;
 static int base_delay = 0;
 static Control control;
 
-static bool enabled() {
-  static const bool on = [] { const char* v = std::getenv("MELEE_ONLINE_LATE_READ"); return !(v && *v == '0'); }();
-  return on;
-}
+static bool enabled() { return host::late_read::enabled(); }   // the setting, or MELEE_ONLINE_LATE_READ
 // Tests: MELEE_TEST_LATE_READ=1 takes it whatever the ping, MELEE_TEST_LATE_HOLD_MS fixes the wait.
 static bool forced() {
   static const bool on = [] { const char* v = host::test_env::getenv("MELEE_TEST_LATE_READ"); return v && *v == '1'; }();

@@ -451,11 +451,11 @@ void start(bool harness) {
   mu_net::SessionCallbacks callbacks;
   callbacks.log = [](const char* line) { host::log("p2p: %s", line); };
   callbacks.set_emulation_speed = [](double speed) { g().speed.store(speed, std::memory_order_relaxed); };
-  // Late controller read (host/late_read.h): MELEE_ONLINE_LATE_READ=0 turns it off. Tests:
+  // Late controller read (host/late_read.h): only with "Variable online delay" on (or MELEE_ONLINE_LATE_READ=1). Tests:
   // MELEE_TEST_LATE_READ=1 takes it whatever the ping, MELEE_TEST_LATE_HOLD_MS fixes the wait.
   static host::late_read::Control late_control;
   static bool late_soured = false;   // a game played this way went badly: not offered again in this session
-  static const bool late_on = [] { const char* v = std::getenv("MELEE_ONLINE_LATE_READ"); return !(v && *v == '0'); }();
+  const bool late_on = host::late_read::enabled();   // read per session: the setting can change between them
   if (late_on) {
     callbacks.late_offer = [](int delay, uint32_t ping_us) {
       static const bool forced = [] { const char* v = host::test_env::getenv("MELEE_TEST_LATE_READ"); return v && *v == '1'; }();

@@ -299,6 +299,9 @@ struct RenderOptions {
   // host::early_input::set_enabled when the file is read and when the toggle changes. On by default
   // (owner 11-22); 1.0.2 to 1.0.5 saved it off for everyone under early_inputs2, which is not read.
   bool early_inputs = true;
+  // Variable online delay (owner 11-24: an option, off by default): the online late read, one frame less
+  // than the chosen delay when the ping leaves room (slippi_online.cpp late_read). Ini key late_read.
+  bool online_late_read = false;
   // Slippi Dolphin's spectator server (Game tab, Online; ini keys slippi_spectator, on unless the
   // file says 0, and slippi_spectator_port, 51441): the game's recording events on a local ENet
   // port for the Slippi Launcher's Broadcast tab and stream overlays (hle/slippi_spectate.cpp).

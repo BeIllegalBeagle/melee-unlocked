@@ -55,6 +55,7 @@
 #include "audio.h"
 #include "host.h"
 #include "early_input.h"
+#include "late_read.h"
 #include "input_bindings.h"
 #include "settings_nav.h"
 #include "lcancel.h"
@@ -2512,7 +2513,10 @@ void load_pc_settings(RenderOptions& options, int& volume) {
         offline_delay_frames_seen = true;
       }
       // early_inputs and early_inputs2, older keys (the second saved off for everyone), are not read.
-      else if (key == "early_inputs3" || key == "early_inputs2" || key == "early_inputs") { if (key == "early_inputs3") options.early_inputs = value != "0"; }
+      else if (key == "early_inputs3" || key == "early_inputs2" || key == "early_inputs" || key == "late_read") {
+        if (key == "early_inputs3") options.early_inputs = value != "0";
+        else if (key == "late_read") options.online_late_read = value == "1";
+      }
       else if (key == "performance") options.performance_overlay = value == "1";
       else if (key == "showfps") { options.show_fps = value == "1"; showfps_seen = true; }
       // showfps_yougame2: builds before 10-31 saved showfps_yougame 1 on every save (the old default),
@@ -2940,6 +2944,7 @@ void load_pc_settings(RenderOptions& options, int& volume) {
   if (!offline_delay_frames_seen) options.offline_delay_frames = slippi::online::config().delay;
   RenderOptions::live_offline_delay_frames() = options.offline_delay_frames;
   host::early_input::set_enabled(options.early_inputs);
+  host::late_read::set_enabled(options.online_late_read);
 #ifndef MELEE_NO_SLIPPI
   RenderOptions::live_slippi_spectator() = options.slippi_spectator;
   RenderOptions::live_slippi_spectator_port() = options.slippi_spectator_port;
@@ -5283,7 +5288,7 @@ static bool write_settings_file_impl(const SettingsState& state, const RenderOpt
        << "\nonlinedelayauto " << (slippi::online::config().auto_delay ? 1 : 0)
        << "\noffline_delay " << (options.offline_delay ? 1 : 0)
        << "\noffline_delay_frames " << options.offline_delay_frames
-       << "\nearly_inputs3 " << (options.early_inputs ? 1 : 0)
+       << "\nearly_inputs3 " << (options.early_inputs ? 1 : 0) << "\nlate_read " << (options.online_late_read ? 1 : 0)
        << "\nquickchat " << slippi::online::config().chat
        << "\ndirectpause " << (slippi::online::config().direct_pause ? 1 : 0)
        << "\nportcolour1 " << slippi::online::config().port_colour[0]
@@ -10766,6 +10771,15 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
       if (online == 1)
         ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.25f, 1.0f),
                            "1 frame online can cause more rollbacks: fighters may jump or stutter.");
+      if (settings_toggle("Variable online delay", &options.online_late_read)) {
+        host::late_read::set_enabled(options.online_late_read);
+        changed = true;
+      }
+      if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Off: every online match plays at the delay above, the same timing whatever the ping.\n"
+                          "On: in 1v1 with a low ping and a PC with room, the game plays one frame less than\n"
+                          "that delay, so presses show sooner; the delay can then differ from match to match.\n"
+                          "Takes effect from the next online match.");
 #endif
       ImGui::TextDisabled("Added input delay, not total controller-to-screen latency.");
     }
