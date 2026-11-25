@@ -146,7 +146,9 @@ static void init_icon(int rank)
     panel.icon = HSD_JObjLoadJoint(DP(desc->joint));
     if (!panel.icon) return;
     panel.icon->translate.x = -9.f;
-    panel.icon->translate.y = -12.5f;
+    /* Slippi's -12.5 drew the icon's centre 1.8 units above its rank and rating lines here, its top over the
+     * "Rank" label (owner 11-24, captures with MELEE_TEST_RANK_PANEL): centred on those two lines instead. */
+    panel.icon->translate.y = -14.3f;
     panel.icon->scale.x = 2.f;
     panel.icon->scale.y = 2.f;
     HSD_JObjSetMtxDirtySub(panel.icon);
