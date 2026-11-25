@@ -115,6 +115,7 @@ static void HSD_SisLib_803A5CC4(HSD_Text* t) { --text_count; delete t; }
 static HSD_GObj* GObj_Create(int, int, int) { return &owner; }
 static void GObj_InitUserData(HSD_GObj*, int, void (*fn)(void*), void*) { cleanup = fn; }
 #include "../../sourceport/game/shim/mu_ranked_rank.c"
+const char* mu_test_getenv(const char*) { return nullptr; }   // no test switches here (MELEE_TEST_RANK_PANEL is off)
 
 static std::vector<std::string> splash;
 static GXColor splash_colors[5];
