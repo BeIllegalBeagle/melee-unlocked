@@ -422,7 +422,9 @@ static HSD_Text* text_create(MuRankedWidgets* w, float x, float y, float scale)
         return NULL;
     }
     t->pos_x=x; t->pos_y=y; t->pos_z=0; t->box_size_x=t->box_size_y=20;
-    t->default_kerning=1; t->x34.x=t->x34.y=scale;
+    t->default_kerning=1; t->x34.y=scale;
+    /* True widescreen stretches this flat layer: glyphs keep their shape (header_text). */
+    { float mu_picture_widen(void); t->x34.x=scale/mu_picture_widen(); }
     HSD_SisLib_803A6B98(t,0,0,"%s","");
     return t;
 }
@@ -446,7 +448,6 @@ static void header_text(MuRankedWidgets* w, const MuRankedSetupModel* m, const M
         HSD_SisLib_803A62A0(0,"SdSlChr.usd","SIS_SelCharData");
     w->canvas=HSD_SisLib_803A611C(0,NULL,9,18,0,3,0,19);
     w->text=text_create(w,320,45,.7f);
-    if (w->text) w->text->x34.x/=mu_picture_widen();   /* not stretched by True widescreen */
     if (w->text) {
         w->text->default_alignment=1;
         HSD_SisLib_803A6B98(w->text,0,130,"%s","");
@@ -469,7 +470,6 @@ static void header_text(MuRankedWidgets* w, const MuRankedSetupModel* m, const M
         /* Slippi GameSetup.c InitPlayerInfo: the name at scale 5 and the code 2 units under it at scale 3,
          * gray, both 3.55 units in from x 28 to leave room for the rank icon (10 px a unit here). */
         w->names[i]=text_create(w,widen_x(i ? 564.5f : 75.5f),39,.7f*5.f/6.f);
-        if (w->names[i]) w->names[i]->x34.x/=mu_picture_widen();   /* glyphs keep their shape */
         if (w->names[i]) {
             unsigned player=i ? !m->local_player : m->local_player;
             char name[31], code[10];
