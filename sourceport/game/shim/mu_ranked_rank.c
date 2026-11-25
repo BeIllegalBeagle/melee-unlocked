@@ -6,6 +6,7 @@
  * rank_enum). No Slippi server IO.
  * SPDX-License-Identifier: GPL-3.0-or-later */
 #include <mu_native.h>
+#include <mu_test_env.h>
 #include <mu_ranked_setup_online.h>
 #include "mu_rank_text.h"
 #include <stdio.h>
@@ -69,7 +70,11 @@ static MuYgU16 shown_matches = 0xFFFF;
 
 static int active(void)
 {
-    return mu_slippi_css_online() && mu_slippi_state()->mode == MU_SLP_MODE_RANKED;
+    /* MELEE_TEST_RANK_PANEL (tests only): the panel on any online character select, so a hidden run (which
+     * cannot queue Ranked) can capture it. */
+    static int test = -1;
+    if (test < 0) test = mu_test_getenv("MELEE_TEST_RANK_PANEL") != NULL;
+    return mu_slippi_css_online() && (test || mu_slippi_state()->mode == MU_SLP_MODE_RANKED);
 }
 
 /* yougame_ranked.h rank_enum: challenger is Grandmaster; YouGame's division 1 is a tier's top. */
