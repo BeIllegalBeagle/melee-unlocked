@@ -7616,7 +7616,9 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
             ImGui::TextDisabled("%s download", card.size);
             if (!s.message.empty()) ImGui::TextWrapped("%s", s.message.c_str());
           }
-#ifdef _WIN32
+          // Linux too (owner 11-24: the settings look the same as on Windows): the compat ShellExecuteA opens
+          // the page with xdg-open.
+#if defined(_WIN32) || defined(__linux__)
           if (settings_widgets::SmallButton("Authors' page")) ShellExecuteA(nullptr, "open", card.page, nullptr, nullptr, SW_SHOWNORMAL);
 #endif
           ImGui::PopID();
@@ -7770,7 +7772,8 @@ bool settings_frame(SettingsState& state, RenderOptions& options) {
           restart_now_button("look_pack");
       }
       settings_widgets::InputText("Patch folder##exactlooks", patcher_folder, sizeof patcher_folder);
-#ifdef _WIN32
+      // Linux too: the compat GetOpenFileNameW is zenity's or kdialog's file picker.
+#if defined(_WIN32) || defined(__linux__)
       ImGui::SameLine();
       if (settings_widgets::Button("Browse...##lookpatch")) {
         wchar_t path[32768]{};
