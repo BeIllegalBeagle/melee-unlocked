@@ -1251,12 +1251,12 @@ BridgeReply handle(const HttpRequest& request, const std::vector<std::string>& t
         // The site's native Doubles check (native-teams.ts, port/tests/doubles_wiring_test.py) names the build as native_build.
         const std::string version = parse_or_empty(build_json).value("version", std::string());
         body["native_build"] = listed_build_id(version);
-        // Tests only (MELEE_LAUNCHER_TEST=1 with MELEE_TEST_DOUBLES_ANY_BUILD=1): ask YouGame anyway, so a hidden pair
+        // Tests only (MELEE_LAUNCHER_TEST=1 with MELEE_LAUNCHER_TEST_DOUBLES_ANY_BUILD=1): ask YouGame anyway, so a hidden pair
         // still plays a Doubles home while YouGame has not listed this release yet (YouGame then decides).
-        // MELEE_TEST_DOUBLES_BUILD_ID=<YouGame build id> names that listed build instead (YouGame refuses a Doubles home
+        // MELEE_LAUNCHER_TEST_DOUBLES_BUILD_ID=<YouGame build id> names that listed build instead (YouGame refuses a Doubles home
         // with none: bad_teams_lobby).
-        const bool any_build = std::getenv("MELEE_LAUNCHER_TEST") && std::getenv("MELEE_TEST_DOUBLES_ANY_BUILD");
-        const char* test_build = std::getenv("MELEE_LAUNCHER_TEST") ? std::getenv("MELEE_TEST_DOUBLES_BUILD_ID") : nullptr;
+        const bool any_build = std::getenv("MELEE_LAUNCHER_TEST") && std::getenv("MELEE_LAUNCHER_TEST_DOUBLES_ANY_BUILD");
+        const char* test_build = std::getenv("MELEE_LAUNCHER_TEST") ? std::getenv("MELEE_LAUNCHER_TEST_DOUBLES_BUILD_ID") : nullptr;
         if (test_build && *test_build && body["native_build"].get<std::string>().empty()) body["native_build"] = std::string(test_build);
         if (any_build && body["native_build"].get<std::string>().empty()) body.erase("native_build");
         else if (body["native_build"].get<std::string>().empty())

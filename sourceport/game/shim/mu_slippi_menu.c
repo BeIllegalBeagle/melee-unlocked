@@ -1920,7 +1920,7 @@ void mu_lobby_set_partner_want(int want)
 /* The pros a Pro AI partner can be: the Arena panel's own list (port/runtime/gx/arena_panel.cpp kBotChoices),
  * each fighter with the model trained on that player (shim/mu_practice_cpu.c). */
 static const struct { unsigned char ch, model; const char* name; } mu_lobby_pros[MU_LOBBY_PROS] = {
-    { 2, 3, "Fox (Cody)" }, { 20, 0, "Falco (Mang0)" }, { 9, 1, "Marth (Zain)" }, { 17, 4, "Yoshi (aMSa)" } };
+    { 2, 3, "Pro AI Fox" }, { 20, 0, "Pro AI Falco" }, { 9, 1, "Pro AI Marth" }, { 17, 4, "Pro AI Yoshi" } };
 int mu_lobby_partner_pro(void)
 {
     return lobby.partner_pro >= 0 && lobby.partner_pro < MU_LOBBY_PROS ? lobby.partner_pro : 0;

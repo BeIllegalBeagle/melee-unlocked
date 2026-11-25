@@ -251,7 +251,7 @@ static int mu_f4_send(const unsigned char* req, unsigned size)
  * (a Teams invite, yougame_friends.h doubles_invite). Only seat 0 turns it; it is locked while the home
  * searches, once a match is being set up, while a friend is in the seat, and while a CPU or Player 2 sits down.
  * Pro AI (owner 11-23, after Invite: Find, Invite, Pro AI, P2, CPU) is P2's claim with the door played by a Pro AI:
- * each A on it moves to the next pro (Fox (Cody), Falco (Mang0), Marth (Zain), Yoshi (aMSa)), then on to P2. The
+ * each A on it moves to the next pro (Fox, Falco, Marth, Yoshi), then on to P2. The
  * door's coin goes down on the pro's fighter by itself (mu_f4_proai_door) and in the match the model plays the
  * seat on this machine (shim/mu_online.c, CMD_PROAI_SEAT): the room only sees Player 2. */
 static const char* const mu_f4_want_names[MU_LOBBY_WANTS] = { "find", "invite", "p2", "cpu", "proai" };

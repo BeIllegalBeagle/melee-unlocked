@@ -818,10 +818,10 @@ void prompt_box(float x, float y, float w, const View& v, int kind) {
 }
 
 // The Rules page's Pro AI row: Off, then the characters whose pro ships with the game (ProAI folder):
-// Fox (Cody), Falco (Mang0), Marth (Zain), Yoshi (aMSa). Slippi's external ids; the pro follows the
+// Fox, Falco, Marth, Yoshi (named by fighter: only Fight a pro names the pros). Slippi's external ids; the pro follows the
 // character (ghost_ai).
 struct BotChoice { uint8_t character, pro; const char* name; };
-constexpr BotChoice kBotChoices[] = {{2, 3, "Fox (Cody)"}, {20, 0, "Falco (Mang0)"}, {9, 1, "Marth (Zain)"}, {17, 4, "Yoshi (aMSa)"}};
+constexpr BotChoice kBotChoices[] = {{2, 3, "Pro AI Fox"}, {20, 0, "Pro AI Falco"}, {9, 1, "Pro AI Marth"}, {17, 4, "Pro AI Yoshi"}};
 constexpr int kBotChoiceCount = (int)(sizeof kBotChoices / sizeof kBotChoices[0]);
 // Which choice this player's Pro AI is: -1 none.
 int my_bot_choice(const View& v) {
@@ -1045,7 +1045,7 @@ void press(Do what, const View& v) {
       ar::toggle_watch_layout();
       break;
     case Do::ProAi:
-      // A Direct game becomes a room: the opponent, this player and their Pro AI (Fox, Cody's; the Rules page
+      // A Direct game becomes a room: the opponent, this player and their Pro AI (Fox; the Rules page
       // changes it), a free-for-all proposed once the friend is in.
       host::log("arena panel: ADD PRO AI pressed");
       send_act(Act::DirectProAi, kBotChoices[0].character, std::string(1, (char)kBotChoices[0].pro));

@@ -625,7 +625,7 @@ static struct { int shut, shut_count, shut_texts; HSD_JObj* shut_jobj[MU_F4_SHUT
     unsigned panel_draws, panel_frame; } mu_f4;
 enum { MU_LOBBY_WANT_FIND = 0, MU_LOBBY_WANT_INVITE = 1, MU_LOBBY_WANT_P2 = 2, MU_LOBBY_WANT_CPU = 3, MU_LOBBY_WANT_PROAI = 4 };
 static int curtain, want_v;
-static const char* mu_lobby_partner_pro_name(void) { return "Falco (Mang0)"; }
+static const char* mu_lobby_partner_pro_name(void) { return "Falco (Pro AI)"; }
 static int mu_lobby_curtain(void) { return curtain; }
 static int mu_lobby_partner_want(void) { return want_v; }
 /* The panel names the player's own keys; here no keyboard is bound, so the controller words stay. */
@@ -790,7 +790,7 @@ int main(void)
     check(&v, MU_LOBBY_HINT_START_PARTNER, 0, MU_LOBBY_WANT_CPU, "",
           LINES("Character selected", 2, "Waiting for players", 1, "Partner: CPU", 1), "Tab changes partner", "");
     check(&v, MU_LOBBY_HINT_START_PARTNER, 0, MU_LOBBY_WANT_PROAI, "",   /* the Pro AI sitting down */
-          LINES("Character selected", 2, "Waiting for players", 1, "Partner: Falco (Mang0)", 1), "Tab changes partner", "");
+          LINES("Character selected", 2, "Waiting for players", 1, "Partner: Falco (Pro AI)", 1), "Tab changes partner", "");
     v.flags |= MU_LOBBY_F_INVITING;
     check(&v, MU_LOBBY_HINT_START_PARTNER, 0, MU_LOBBY_WANT_INVITE, "",
           LINES("Character selected", 2, "Waiting for players", 1, "Inviting a friend", 1), "Press B to cancel", "");
@@ -802,7 +802,7 @@ int main(void)
     check(&v, MU_LOBBY_HINT_START_SEARCH, 0, MU_LOBBY_WANT_P2, "",
           LINES("Character selected", 2, "Press START to search", 1, "Partner: Player 2", 2), "Tab changes partner", "");
     check(&v, MU_LOBBY_HINT_START_SEARCH, 0, MU_LOBBY_WANT_PROAI, "",   /* the Pro AI in Player 2's seat */
-          LINES("Character selected", 2, "Press START to search", 1, "Partner: Falco (Mang0)", 2), "Tab changes partner", "");
+          LINES("Character selected", 2, "Press START to search", 1, "Partner: Falco (Pro AI)", 2), "Tab changes partner", "");
     v.seats[1].kind = MU_LOBBY_KIND_HUMAN; strcpy(v.seats[1].name, "Fox (main)");
     check(&v, MU_LOBBY_HINT_START_SEARCH, 0, MU_LOBBY_WANT_FIND, "",   /* a friend: the tab is locked */
           LINES("Character selected", 2, "Press START to search", 1, "Partner: Fox  main ", 2), "", "");
