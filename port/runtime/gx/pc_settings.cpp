@@ -2500,7 +2500,7 @@ void load_pc_settings(RenderOptions& options, int& volume) {
       else if (key == "practicecpu") {
         MuPcConfig pc;
         if (practice_cpu::from_text(value, pc)) {
-          // A Fight a pro pick lasts for its session (grizzly 11-24: Training started with Cody playing by
+          // A Fight a pro pick lasts for its session (grizzly 11-24: Training started with a pro playing by
           // itself). The next launch starts Training with its usual CPU; the rest of the setup is kept.
           if (pc.preset & 0x80u) { pc.preset = 0; pc.enabled = 0; }
           practice_cpu::set_config(pc);
