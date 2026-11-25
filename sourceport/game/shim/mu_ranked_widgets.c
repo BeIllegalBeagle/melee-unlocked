@@ -432,10 +432,10 @@ static void text_set(HSD_Text* t, unsigned sub, const char* value)
 }
 /* This scene owns a pixel-space canvas, unlike CSS/HUD world-space text. True widescreen widens the
  * perspective scene (the timer bar) but not this flat layer, so a pixel x is brought toward the centre
- * by the same factor (mu_arcade.c does the same): the names and badges stay over the bar, not at the
+ * by the picture's widening (above 1 in True widescreen: 16:9 over 4:3): the names and badges stay over the bar, not at the
  * screen edges. 1 in 4:3 and with Slippi's widescreen code. */
 float mu_picture_widen(void);
-static float widen_x(float x) { return 320.f + (x - 320.f) * mu_picture_widen(); }
+static float widen_x(float x) { return 320.f + (x - 320.f) / mu_picture_widen(); }
 static void header_text(MuRankedWidgets* w, const MuRankedSetupModel* m, const MuMatchState* ms)
 {
     unsigned i;
@@ -446,6 +446,7 @@ static void header_text(MuRankedWidgets* w, const MuRankedSetupModel* m, const M
         HSD_SisLib_803A62A0(0,"SdSlChr.usd","SIS_SelCharData");
     w->canvas=HSD_SisLib_803A611C(0,NULL,9,18,0,3,0,19);
     w->text=text_create(w,320,45,.7f);
+    if (w->text) w->text->x34.x/=mu_picture_widen();   /* not stretched by True widescreen */
     if (w->text) {
         w->text->default_alignment=1;
         HSD_SisLib_803A6B98(w->text,0,130,"%s","");
@@ -468,7 +469,7 @@ static void header_text(MuRankedWidgets* w, const MuRankedSetupModel* m, const M
         /* Slippi GameSetup.c InitPlayerInfo: the name at scale 5 and the code 2 units under it at scale 3,
          * gray, both 3.55 units in from x 28 to leave room for the rank icon (10 px a unit here). */
         w->names[i]=text_create(w,widen_x(i ? 564.5f : 75.5f),39,.7f*5.f/6.f);
-        if (w->names[i]) w->names[i]->x34.x*=mu_picture_widen();   /* glyphs keep their shape */
+        if (w->names[i]) w->names[i]->x34.x/=mu_picture_widen();   /* glyphs keep their shape */
         if (w->names[i]) {
             unsigned player=i ? !m->local_player : m->local_player;
             char name[31], code[10];
