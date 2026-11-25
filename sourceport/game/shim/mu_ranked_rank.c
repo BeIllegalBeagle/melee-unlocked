@@ -260,6 +260,10 @@ void mu_ranked_rank_enter(void)
     /* InitRankInfoText: kerning 1, left aligned, scale 0.01 (here: font 0.1 with positions in tenths
      * of a world unit, so Slippi's x/10 and scale/10). */
     panel.text->default_kerning = 1;
+    /* Slippi's text->use_aspect = 1 and text->aspect.X *= 2.5 (m-ex Text: use_aspect is SIS fitting at 0x48,
+     * aspect the text box at 0x0C). Left unset, every line was laid out against the default box. */
+    panel.text->default_fitting = 1;
+    panel.text->box_size_x *= 2.5f;
     panel.text->default_alignment = 0;
     panel.text->pos_x = 0;
     panel.text->pos_y = 0;
